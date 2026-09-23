@@ -274,6 +274,27 @@ export async function loadUserPdfDocument(file: File): Promise<DocumentInfo> {
 let cachedDocPromise: Promise<any> | null = null;
 let cachedPdfBytes: Uint8Array | null = null;
 
+function getPdfJsDocOptions(pdfBytes: Uint8Array): any {
+  const bufferCopy = pdfBytes.slice();
+  const origin = typeof window !== 'undefined' && window.location?.origin
+    ? window.location.origin
+    : '';
+
+  // Local wasm bundle ensures offline & sandboxed jbig2 / openjpeg decoding
+  const wasmUrl = origin
+    ? `${origin}/wasm/`
+    : `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/wasm/`;
+
+  return {
+    data: bufferCopy,
+    cMapUrl: `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/cmaps/`,
+    cMapPacked: true,
+    wasmUrl,
+    standardFontDataUrl: `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/standard_fonts/`,
+    useWorkerFetch: true,
+  };
+}
+
 export function getPdfJsDocument(pdfBytes: Uint8Array): Promise<any> {
   // If we already have a loading/resolved promise for these exact bytes, reuse it immediately
   if (cachedDocPromise && cachedPdfBytes === pdfBytes) {
@@ -290,15 +311,7 @@ export function getPdfJsDocument(pdfBytes: Uint8Array): Promise<any> {
   }
 
   cachedPdfBytes = pdfBytes;
-  // CRITICAL: Always slice a fresh copy of the Uint8Array buffer so the web worker
-  // transfer never detaches the original Uint8Array buffer used by the application!
-  const bufferCopy = pdfBytes.slice();
-
-  const loadingTask = pdfjsLib.getDocument({
-    data: bufferCopy,
-    cMapUrl: `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/cmaps/`,
-    cMapPacked: true,
-  });
+  const loadingTask = pdfjsLib.getDocument(getPdfJsDocOptions(pdfBytes));
 
   cachedDocPromise = loadingTask.promise.catch((err) => {
     // If loading fails, clear cache so subsequent retries can succeed
@@ -351,7 +364,7 @@ export function cancelActiveCanvasRender(canvas: HTMLCanvasElement): void {
  * Checks full-image strides and the center column to reliably detect drawn content.
  */
 function isCanvasBlank(canvas: HTMLCanvasElement): boolean {
-  const ctx = canvas.getContext('2d');
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
   if (!ctx) return true;
   const w = canvas.width;
   const h = canvas.height;
@@ -817,11 +830,9 @@ async function renderScannedPageFallback(
         singleDoc.addPage(copiedPage);
         const singleBytes = await singleDoc.save();
 
-        const singlePdfJsDoc = await pdfjsLib.getDocument({
-          data: singleBytes,
-          cMapUrl: `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/cmaps/`,
-          cMapPacked: true,
-        }).promise;
+        const singlePdfJsDoc = await pdfjsLib.getDocument(
+          getPdfJsDocOptions(singleBytes)
+        ).promise;
 
         const singlePage = await singlePdfJsDoc.getPage(1);
         const viewport = singlePage.getViewport({ scale: scale * dpr });
@@ -942,7 +953,7 @@ export async function renderPdfPageToCanvas(
     offscreenCanvas.width = Math.max(1, Math.round(viewport.width));
     offscreenCanvas.height = Math.max(1, Math.round(viewport.height));
 
-    const offscreenCtx = offscreenCanvas.getContext('2d');
+    const offscreenCtx = offscreenCanvas.getContext('2d', { willReadFrequently: true });
     if (!offscreenCtx) throw new Error('Could not obtain offscreen canvas 2D context');
 
     const renderContext = {
