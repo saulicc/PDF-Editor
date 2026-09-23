@@ -91,25 +91,42 @@ export default function StampTool({ onBack }: StampToolProps) {
   const [isLoadingUpload, setIsLoadingUpload] = useState<boolean>(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
 
-  const handleUploadPdf = async (file: File) => {
+  const handleUploadPdf = async (
+    file: File,
+    options?: { newStartNumber?: number }
+  ) => {
     try {
       setUploadError(null);
       setIsLoadingUpload(true);
       const doc = await loadUserPdfDocument(file);
       setDocInfo(doc);
       setCurrentPageIndex(0);
-      // Posición predeterminada: esquina superior derecha, exactamente a 3 pt del borde visible
+
+      // Si se especifica un número inicial nuevo (ej: al continuar foliación desde ExportModal)
+      if (options?.newStartNumber !== undefined) {
+        setStampGroup((prev) => ({
+          ...prev,
+          folio: {
+            ...prev.folio,
+            startNumber: options.newStartNumber!,
+          },
+        }));
+      }
+
+      // Actualizar rango predeterminado de páginas
+      setCustomRangeStr(`1-${doc.totalPages}`);
+
+      // Mantener la posición y configuración del sello adaptada al tamaño de página del nuevo documento
       const firstPage = doc.pages[0];
       if (firstPage) {
         setStampGroup((prev) => {
           const coords = getPageStampCoordinates(
-            { ...prev, placementPreset: 'top-right' },
+            prev,
             firstPage.width,
             firstPage.height
           );
           return {
             ...prev,
-            placementPreset: 'top-right',
             x: coords.x,
             y: coords.y,
           };
@@ -117,6 +134,7 @@ export default function StampTool({ onBack }: StampToolProps) {
       }
     } catch (err: any) {
       setUploadError(err.message || 'No se pudo leer el archivo PDF.');
+      alert('Error al leer el archivo PDF: ' + (err.message || 'El archivo puede estar dañado o no es un PDF válido.'));
     } finally {
       setIsLoadingUpload(false);
     }
@@ -276,10 +294,11 @@ export default function StampTool({ onBack }: StampToolProps) {
         onCustomRangeStrChange={setCustomRangeStr}
         onGenerateSample={handleGenerateSample}
         onExportPdf={handleExportPdf}
+        onUploadPdf={handleUploadPdf}
       />
 
       {/* Main Interactive Stage: Canvas with single-unit StampGroup */}
-      <main className="flex-1 flex flex-col h-full min-w-0 overflow-hidden">
+      <main className="flex-1 flex flex-col h-full min-w-0 overflow-hidden relative">
         <StampCanvas
           pdfBytes={docInfo.pdfBytes}
           currentPageIndex={currentPageIndex}
@@ -287,6 +306,9 @@ export default function StampTool({ onBack }: StampToolProps) {
           stampGroup={stampGroup}
           onPageChange={setCurrentPageIndex}
           onStampGroupChange={setStampGroup}
+          docFileName={docInfo.fileName}
+          onUploadPdf={handleUploadPdf}
+          isLoadingUpload={isLoadingUpload}
         />
       </main>
 
@@ -299,6 +321,11 @@ export default function StampTool({ onBack }: StampToolProps) {
         startFolio={startFolioNumber}
         endFolio={endFolioNumber}
         onClose={() => setIsExportModalOpen(false)}
+        onUploadNextPdf={(file, continueFolio) => {
+          setIsExportModalOpen(false);
+          const nextStart = continueFolio ? endFolioNumber + 1 : undefined;
+          handleUploadPdf(file, { newStartNumber: nextStart });
+        }}
       />
     </div>
   );

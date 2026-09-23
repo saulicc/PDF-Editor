@@ -57,6 +57,7 @@ interface SidebarControlsProps {
   onCustomRangeStrChange: (str: string) => void;
   onGenerateSample: (pages: number) => void;
   onExportPdf: () => void;
+  onUploadPdf?: (file: File) => void;
 }
 
 const THEME_OPTIONS: { mode: ThemeMode; label: string; Icon: typeof Sun }[] = [
@@ -83,6 +84,7 @@ export const SidebarControls: React.FC<SidebarControlsProps> = ({
   onCustomRangeStrChange,
   onGenerateSample,
   onExportPdf,
+  onUploadPdf,
 }) => {
   const [activeTab, setActiveTab] = useState<'stamp' | 'folio' | 'document'>('stamp');
   const [svgUploadError, setSvgUploadError] = useState<string | null>(null);
@@ -329,6 +331,50 @@ export const SidebarControls: React.FC<SidebarControlsProps> = ({
             <Sliders className="w-3.5 h-3.5 text-blue-300" />
             <span>Calibrar</span>
           </button>
+        </div>
+
+        {/* Documento en curso & Botón para cargar otro PDF sin salir */}
+        <div className="mt-2.5 bg-slate-800/60 border border-slate-700/80 rounded-xl p-2.5 flex items-center justify-between gap-2 shadow-2xs">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="w-7 h-7 rounded-lg bg-blue-500/20 text-blue-400 flex items-center justify-center shrink-0">
+              <FileText className="w-3.5 h-3.5" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-xs font-semibold text-slate-200 truncate" title={docInfo.fileName}>
+                {docInfo.fileName}
+              </p>
+              <p className="text-[10px] text-slate-400">
+                {docInfo.totalPages} {docInfo.totalPages === 1 ? 'página' : 'páginas'} • {(docInfo.fileSize / 1024).toFixed(0)} KB
+              </p>
+            </div>
+          </div>
+          <label
+            htmlFor="sidebar-quick-change-pdf-input"
+            className="flex items-center gap-1 bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-semibold px-2.5 py-1.5 rounded-lg cursor-pointer transition-colors shadow-2xs shrink-0"
+            title="Cargar otro documento PDF sin salir"
+          >
+            <Upload className="w-3 h-3" />
+            <span>Cambiar PDF</span>
+            <input
+              id="sidebar-quick-change-pdf-input"
+              type="file"
+              accept="application/pdf"
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+                if (file) {
+                  if (onUploadPdf) {
+                    onUploadPdf(file);
+                  } else {
+                    const { loadUserPdfDocument } = await import('../lib/pdfRenderer');
+                    const doc = await loadUserPdfDocument(file);
+                    onDocChange(doc);
+                  }
+                }
+                e.target.value = '';
+              }}
+              className="hidden"
+            />
+          </label>
         </div>
       </div>
 
@@ -642,14 +688,14 @@ export const SidebarControls: React.FC<SidebarControlsProps> = ({
             {/* Upload Custom PDF */}
             <div>
               <label className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 block mb-1 uppercase tracking-wider">
-                Cargar Archivo PDF
+                Cargar o Cambiar Archivo PDF
               </label>
               <label
                 htmlFor="pdf-upload-input"
-                className="w-full flex items-center justify-center gap-2 px-3 py-2.5 border-2 border-dashed border-slate-300 dark:border-slate-600 hover:border-blue-500 rounded-xl bg-slate-50 dark:bg-slate-800/60 hover:bg-blue-50/50 cursor-pointer transition-colors text-xs font-medium text-slate-700 dark:text-slate-300"
+                className="w-full flex items-center justify-center gap-2 px-3 py-3 border-2 border-dashed border-slate-300 dark:border-slate-600 hover:border-blue-500 rounded-xl bg-slate-50 dark:bg-slate-800/60 hover:bg-blue-50/50 cursor-pointer transition-colors text-xs font-medium text-slate-700 dark:text-slate-300"
               >
                 <Upload className="w-4 h-4 text-blue-600" />
-                <span>Subir documento PDF propio</span>
+                <span>Cargar otro documento PDF</span>
                 <input
                   id="pdf-upload-input"
                   type="file"
@@ -657,10 +703,15 @@ export const SidebarControls: React.FC<SidebarControlsProps> = ({
                   onChange={async (e) => {
                     const file = e.target.files?.[0];
                     if (file) {
-                      const { loadUserPdfDocument } = await import('../lib/pdfRenderer');
-                      const doc = await loadUserPdfDocument(file);
-                      onDocChange(doc);
+                      if (onUploadPdf) {
+                        onUploadPdf(file);
+                      } else {
+                        const { loadUserPdfDocument } = await import('../lib/pdfRenderer');
+                        const doc = await loadUserPdfDocument(file);
+                        onDocChange(doc);
+                      }
                     }
+                    e.target.value = '';
                   }}
                   className="hidden"
                 />

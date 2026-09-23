@@ -16,6 +16,9 @@ import {
   Maximize2,
   Move,
   CheckCircle2,
+  Upload,
+  FileText,
+  FolderOpen,
 } from 'lucide-react';
 
 interface StampCanvasProps {
@@ -25,6 +28,9 @@ interface StampCanvasProps {
   stampGroup: StampGroup;
   onPageChange: (newPageIndex: number) => void;
   onStampGroupChange: (updated: StampGroup) => void;
+  docFileName?: string;
+  onUploadPdf?: (file: File) => void;
+  isLoadingUpload?: boolean;
 }
 
 export const StampCanvas: React.FC<StampCanvasProps> = ({
@@ -34,11 +40,15 @@ export const StampCanvas: React.FC<StampCanvasProps> = ({
   stampGroup,
   onPageChange,
   onStampGroupChange,
+  docFileName,
+  onUploadPdf,
+  isLoadingUpload,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [zoomScale, setZoomScale] = useState<number>(1.1);
   const [isRendering, setIsRendering] = useState<boolean>(false);
+  const [isDragOver, setIsDragOver] = useState<boolean>(false);
 
   // Interaction dragging states
   const [isDraggingGroup, setIsDraggingGroup] = useState<boolean>(false);
@@ -354,27 +364,45 @@ export const StampCanvas: React.FC<StampCanvasProps> = ({
   return (
     <div
       id="stamp-canvas-viewport"
-      className="flex-1 flex flex-col h-full bg-slate-100 dark:bg-slate-700 overflow-hidden select-none"
+      className="flex-1 flex flex-col h-full bg-slate-100 dark:bg-slate-700 overflow-hidden select-none relative"
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
+      onDragOver={(e) => {
+        e.preventDefault();
+        if (e.dataTransfer.types && Array.from(e.dataTransfer.types).includes('Files')) {
+          setIsDragOver(true);
+        }
+      }}
+      onDragLeave={(e) => {
+        if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+        setIsDragOver(false);
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        setIsDragOver(false);
+        const file = e.dataTransfer.files?.[0];
+        if (file && onUploadPdf) {
+          onUploadPdf(file);
+        }
+      }}
     >
-      {/* Top Toolbar: Navigation, Zoom & Status */}
-      <div className="h-12 bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 px-4 flex items-center justify-between shadow-2xs z-20">
-        {/* Page navigation */}
-        <div className="flex items-center gap-1.5">
+      {/* Top Toolbar: Navigation, Document info & Upload, Zoom & Status */}
+      <div className="min-h-12 py-1.5 px-3 md:px-4 bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 flex flex-wrap items-center justify-between gap-2 shadow-2xs z-20">
+        {/* Left: Page navigation */}
+        <div className="flex items-center gap-1 shrink-0">
           <button
             type="button"
             id="prev-page-btn"
             disabled={currentPageIndex <= 0}
             onClick={() => onPageChange(currentPageIndex - 1)}
-            className="p-1.5 rounded-lg text-slate-600 dark:text-slate-400 hover:bg-slate-100 hover:dark:bg-slate-700 disabled:opacity-30 disabled:pointer-events-none transition-colors"
+            className="p-1.5 rounded-lg text-slate-600 dark:text-slate-400 hover:bg-slate-100 hover:dark:bg-slate-700 disabled:opacity-30 disabled:pointer-events-none transition-colors cursor-pointer"
             title="Página anterior"
           >
             <ChevronLeft className="w-5 h-5" />
           </button>
 
-          <div className="flex items-center gap-1 text-xs text-slate-700 dark:text-slate-300 font-medium px-2">
-            <span>Pág.</span>
+          <div className="flex items-center gap-1 text-xs text-slate-700 dark:text-slate-300 font-medium px-1 sm:px-2">
+            <span className="hidden sm:inline">Pág.</span>
             <input
               type="number"
               min={1}
@@ -386,9 +414,9 @@ export const StampCanvas: React.FC<StampCanvasProps> = ({
                   onPageChange(val - 1);
                 }
               }}
-              className="w-12 text-center py-0.5 bg-slate-50 dark:bg-slate-800/60 border border-slate-300 dark:border-slate-600 rounded font-semibold text-slate-900 dark:text-slate-100"
+              className="w-11 sm:w-12 text-center py-0.5 bg-slate-50 dark:bg-slate-800/60 border border-slate-300 dark:border-slate-600 rounded font-semibold text-slate-900 dark:text-slate-100 text-xs"
             />
-            <span className="text-slate-500 dark:text-slate-400">de {pages.length}</span>
+            <span className="text-slate-500 dark:text-slate-400">/ {pages.length}</span>
           </div>
 
           <button
@@ -396,35 +424,73 @@ export const StampCanvas: React.FC<StampCanvasProps> = ({
             id="next-page-btn"
             disabled={currentPageIndex >= pages.length - 1}
             onClick={() => onPageChange(currentPageIndex + 1)}
-            className="p-1.5 rounded-lg text-slate-600 dark:text-slate-400 hover:bg-slate-100 hover:dark:bg-slate-700 disabled:opacity-30 disabled:pointer-events-none transition-colors"
+            className="p-1.5 rounded-lg text-slate-600 dark:text-slate-400 hover:bg-slate-100 hover:dark:bg-slate-700 disabled:opacity-30 disabled:pointer-events-none transition-colors cursor-pointer"
             title="Página siguiente"
           >
             <ChevronRight className="w-5 h-5" />
           </button>
         </div>
 
-        {/* Current Folio Indicator on active page */}
-        <div className="flex items-center gap-2 bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 px-3 py-1 rounded-full text-xs text-blue-900 dark:text-blue-300 font-medium">
-          <span className="w-2 h-2 rounded-full bg-blue-600 animate-pulse" />
-          <span>Folio actual:</span>
-          <span className="font-mono font-bold text-blue-950 bg-white dark:bg-slate-800 px-1.5 py-0.5 rounded shadow-2xs border border-blue-100">
-            {currentFolioText}
-          </span>
+        {/* Center: Document Badge & Load Another PDF Button */}
+        <div className="flex items-center gap-2 max-w-full">
+          {docFileName && (
+            <div
+              className="hidden lg:flex items-center gap-1.5 max-w-[200px] xl:max-w-[280px] bg-slate-100 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-700 px-2.5 py-1 rounded-lg text-xs"
+              title={`Documento actual: ${docFileName} (${pages.length} páginas)`}
+            >
+              <FileText className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+              <span className="truncate font-medium text-slate-700 dark:text-slate-300">
+                {docFileName}
+              </span>
+            </div>
+          )}
+
+          {onUploadPdf && (
+            <label
+              htmlFor="topbar-load-another-pdf-input"
+              className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white text-xs font-semibold px-3 py-1.5 rounded-lg cursor-pointer transition-colors shadow-2xs shrink-0"
+              title="Cargar otro documento PDF para trabajar sin salir"
+            >
+              <Upload className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Cargar otro documento</span>
+              <span className="sm:hidden">Otro PDF</span>
+              <input
+                id="topbar-load-another-pdf-input"
+                type="file"
+                accept="application/pdf"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) onUploadPdf(file);
+                  e.target.value = '';
+                }}
+                className="hidden"
+              />
+            </label>
+          )}
+
+          {/* Current Folio Indicator on active page */}
+          <div className="hidden sm:flex items-center gap-1.5 bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 px-2.5 py-1 rounded-lg text-xs text-blue-900 dark:text-blue-300 font-medium shrink-0">
+            <span className="w-2 h-2 rounded-full bg-blue-600 animate-pulse" />
+            <span className="hidden md:inline">Folio:</span>
+            <span className="font-mono font-bold text-blue-950 dark:text-blue-200 bg-white dark:bg-slate-800 px-1 py-0.5 rounded shadow-2xs border border-blue-100 dark:border-blue-900/50">
+              {currentFolioText}
+            </span>
+          </div>
         </div>
 
-        {/* Zoom & Viewport controls */}
-        <div className="flex items-center gap-1.5 text-slate-600 dark:text-slate-400">
+        {/* Right: Zoom & Viewport controls */}
+        <div className="flex items-center gap-1 text-slate-600 dark:text-slate-400 shrink-0">
           <button
             type="button"
             id="zoom-out-btn"
             onClick={() => setZoomScale((z) => Math.max(0.4, Math.round((z - 0.15) * 100) / 100))}
-            className="p-1.5 rounded-lg hover:bg-slate-100 hover:dark:bg-slate-700 transition-colors"
+            className="p-1.5 rounded-lg hover:bg-slate-100 hover:dark:bg-slate-700 transition-colors cursor-pointer"
             title="Alejar"
           >
             <ZoomOut className="w-4 h-4" />
           </button>
 
-          <span className="text-xs font-mono w-12 text-center font-medium text-slate-700 dark:text-slate-300">
+          <span className="text-xs font-mono w-10 text-center font-medium text-slate-700 dark:text-slate-300">
             {Math.round(zoomScale * 100)}%
           </span>
 
@@ -432,7 +498,7 @@ export const StampCanvas: React.FC<StampCanvasProps> = ({
             type="button"
             id="zoom-in-btn"
             onClick={() => setZoomScale((z) => Math.min(2.5, Math.round((z + 0.15) * 100) / 100))}
-            className="p-1.5 rounded-lg hover:bg-slate-100 hover:dark:bg-slate-700 transition-colors"
+            className="p-1.5 rounded-lg hover:bg-slate-100 hover:dark:bg-slate-700 transition-colors cursor-pointer"
             title="Acercar"
           >
             <ZoomIn className="w-4 h-4" />
@@ -442,7 +508,7 @@ export const StampCanvas: React.FC<StampCanvasProps> = ({
             type="button"
             id="zoom-fit-btn"
             onClick={() => setZoomScale(1.0)}
-            className="p-1.5 rounded-lg hover:bg-slate-100 hover:dark:bg-slate-700 transition-colors text-xs font-medium ml-1"
+            className="p-1.5 rounded-lg hover:bg-slate-100 hover:dark:bg-slate-700 transition-colors text-xs font-medium cursor-pointer"
             title="Tamaño 100%"
           >
             100%
@@ -452,6 +518,34 @@ export const StampCanvas: React.FC<StampCanvasProps> = ({
 
       {/* Main Document Workspace Area */}
       <div className="flex-1 overflow-auto p-6 sm:p-10 flex items-start justify-center relative">
+        {/* Drag and Drop File Hover Overlay */}
+        {isDragOver && (
+          <div className="absolute inset-0 z-50 bg-blue-600/20 backdrop-blur-xs border-4 border-dashed border-blue-500 rounded-lg flex flex-col items-center justify-center p-6 pointer-events-none">
+            <div className="bg-white dark:bg-slate-800 p-6 rounded-2xl shadow-2xl flex flex-col items-center gap-3 border border-blue-200 dark:border-blue-700">
+              <div className="w-14 h-14 rounded-2xl bg-blue-50 dark:bg-blue-900/40 text-blue-600 flex items-center justify-center">
+                <Upload className="w-8 h-8" />
+              </div>
+              <p className="text-base font-bold text-slate-800 dark:text-slate-100">
+                Soltá tu archivo PDF acá
+              </p>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Se cargará de inmediato manteniendo la posición y escala de tu sello
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Loading Overlay when a document is being parsed */}
+        {isLoadingUpload && (
+          <div className="absolute inset-0 z-50 bg-slate-900/40 backdrop-blur-2xs flex flex-col items-center justify-center p-6">
+            <div className="bg-white dark:bg-slate-800 p-5 rounded-2xl shadow-2xl flex items-center gap-3 border border-slate-200 dark:border-slate-700">
+              <div className="w-6 h-6 border-3 border-blue-500 border-t-transparent rounded-full animate-spin" />
+              <span className="text-sm font-semibold text-slate-800 dark:text-slate-100">
+                Cargando nuevo documento...
+              </span>
+            </div>
+          </div>
+        )}
         {/* Document Page Canvas Container */}
         <div
           ref={containerRef}

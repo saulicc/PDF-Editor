@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React from 'react';
-import { Download, CheckCircle2, FileText, ExternalLink, X, ShieldCheck } from 'lucide-react';
+import React, { useState } from 'react';
+import { Download, CheckCircle2, FileText, ExternalLink, X, ShieldCheck, FolderOpen, FileUp } from 'lucide-react';
 
 interface ExportModalProps {
   isOpen: boolean;
@@ -14,6 +14,7 @@ interface ExportModalProps {
   startFolio: number;
   endFolio: number;
   onClose: () => void;
+  onUploadNextPdf?: (file: File, continueFolioSequence: boolean) => void;
 }
 
 export const ExportModal: React.FC<ExportModalProps> = ({
@@ -24,7 +25,10 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   startFolio,
   endFolio,
   onClose,
+  onUploadNextPdf,
 }) => {
+  const [continueFolioSequence, setContinueFolioSequence] = useState<boolean>(true);
+
   if (!isOpen || !exportedPdfBytes) return null;
 
   const downloadFile = () => {
@@ -132,6 +136,51 @@ export const ExportModal: React.FC<ExportModalProps> = ({
               <span>Ver</span>
             </button>
           </div>
+
+          {/* Cargar siguiente documento sin salir */}
+          {onUploadNextPdf && (
+            <div className="pt-3 border-t border-slate-200 dark:border-slate-700">
+              <div className="bg-blue-50/80 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 rounded-xl p-3.5 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
+                    <FileUp className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                    ¿Querés seguir foliando otro documento?
+                  </span>
+                </div>
+                <label className="flex items-center gap-2 text-[11px] text-slate-700 dark:text-slate-300 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={continueFolioSequence}
+                    onChange={(e) => setContinueFolioSequence(e.target.checked)}
+                    className="rounded text-blue-600 focus:ring-blue-500 w-3.5 h-3.5 cursor-pointer"
+                  />
+                  <span>
+                    Continuar folio automáticamente en el <strong>N° {endFolio + 1}</strong>
+                  </span>
+                </label>
+                <label
+                  htmlFor="modal-next-pdf-upload"
+                  className="w-full py-2.5 px-3 bg-white dark:bg-slate-800 hover:bg-blue-50 hover:dark:bg-slate-700/80 border border-blue-300 dark:border-blue-700 text-blue-700 dark:text-blue-300 font-semibold rounded-lg text-xs flex items-center justify-center gap-2 cursor-pointer transition-colors shadow-2xs"
+                >
+                  <FolderOpen className="w-4 h-4" />
+                  <span>Cargar siguiente PDF</span>
+                  <input
+                    id="modal-next-pdf-upload"
+                    type="file"
+                    accept="application/pdf"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file && onUploadNextPdf) {
+                        onUploadNextPdf(file, continueFolioSequence);
+                      }
+                      e.target.value = '';
+                    }}
+                    className="hidden"
+                  />
+                </label>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
