@@ -110,9 +110,6 @@ export const StampCanvas: React.FC<StampCanvasProps> = ({
 
     return () => {
       isCancelled = true;
-      if (canvas) {
-        cancelActiveCanvasRender(canvas);
-      }
     };
   }, [pdfBytes, currentPageIndex, zoomScale]);
 
@@ -614,9 +611,10 @@ export const StampCanvas: React.FC<StampCanvasProps> = ({
 
           {/* Loading overlay during page changes */}
           {isRendering && (
-            <div className="absolute inset-0 bg-white dark:bg-slate-800/40 backdrop-blur-2xs flex items-center justify-center pointer-events-none">
-              <div className="bg-slate-900/80 text-white text-xs px-3 py-1.5 rounded-full shadow-lg font-medium">
-                Cargando página...
+            <div className="absolute inset-0 bg-white/50 dark:bg-slate-900/50 backdrop-blur-2xs flex items-center justify-center pointer-events-none transition-opacity">
+              <div className="bg-slate-900/85 text-white text-xs px-3.5 py-1.5 rounded-full shadow-lg font-medium flex items-center gap-2">
+                <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                <span>Cargando página...</span>
               </div>
             </div>
           )}

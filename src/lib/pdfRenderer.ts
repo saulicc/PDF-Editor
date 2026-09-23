@@ -4,9 +4,19 @@
  */
 
 import * as pdfjsLib from 'pdfjs-dist';
+// @ts-expect-error - bundled worker file does not supply separate .d.ts
+import * as pdfWorkerModule from 'pdfjs-dist/build/pdf.worker.min.mjs';
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { PDFDocument, PDFName, PDFDict, StandardFonts, rgb } from 'pdf-lib';
 import { DocumentInfo, PageInfo } from '../types';
+
+// Register in-memory worker module on globalThis and window so PDF.js never fails or hangs in iframes
+if (typeof globalThis !== 'undefined') {
+  (globalThis as any).pdfjsWorker = pdfWorkerModule;
+}
+if (typeof window !== 'undefined') {
+  (window as any).pdfjsWorker = pdfWorkerModule;
+}
 
 // Set worker source for pdfjs-dist: bundled local worker ensures 100% offline & sandbox execution
 try {
@@ -333,11 +343,12 @@ export function cancelActiveCanvasRender(canvas: HTMLCanvasElement): void {
     } catch (_) {}
     (canvas as any)._activeRenderTask = null;
   }
+  (canvas as any)._activeRenderState = null;
 }
 
 /**
- * Fast inspection to check if a rendered canvas is completely blank white.
- * Samples a 5x5 grid (25 points) across the canvas.
+ * High-accuracy inspection to check if a rendered canvas is completely blank white or transparent.
+ * Checks full-image strides and the center column to reliably detect drawn content.
  */
 function isCanvasBlank(canvas: HTMLCanvasElement): boolean {
   const ctx = canvas.getContext('2d');
@@ -346,21 +357,35 @@ function isCanvasBlank(canvas: HTMLCanvasElement): boolean {
   const h = canvas.height;
   if (w <= 0 || h <= 0) return true;
 
-  const sampleXs = [
-    Math.floor(w * 0.1), Math.floor(w * 0.25), Math.floor(w * 0.5),
-    Math.floor(w * 0.75), Math.floor(w * 0.9)
-  ];
-  const sampleYs = [
-    Math.floor(h * 0.1), Math.floor(h * 0.25), Math.floor(h * 0.5),
-    Math.floor(h * 0.75), Math.floor(h * 0.9)
-  ];
-
   try {
-    for (const x of sampleXs) {
-      for (const y of sampleYs) {
-        const pixel = ctx.getImageData(x, y, 1, 1).data;
-        // If alpha > 0 and pixel is not near-white (r < 248 || g < 248 || b < 248)
-        if (pixel[3] > 10 && (pixel[0] < 248 || pixel[1] < 248 || pixel[2] < 248)) {
+    const imgData = ctx.getImageData(0, 0, w, h);
+    const data = imgData.data;
+    const len = data.length;
+
+    // Fast stride check across full canvas (every 16th pixel = 64 bytes)
+    for (let i = 0; i < len; i += 64) {
+      const a = data[i + 3];
+      if (a > 10) {
+        const r = data[i];
+        const g = data[i + 1];
+        const b = data[i + 2];
+        // If not pure white (has any dark or colored ink)
+        if (r < 248 || g < 248 || b < 248) {
+          return false;
+        }
+      }
+    }
+
+    // High-density check on document middle vertical slice (where scanned content is located)
+    const midX = Math.floor(w / 2);
+    const midColumn = ctx.getImageData(midX, 0, 1, h).data;
+    for (let i = 0; i < midColumn.length; i += 4) {
+      const a = midColumn[i + 3];
+      if (a > 10) {
+        const r = midColumn[i];
+        const g = midColumn[i + 1];
+        const b = midColumn[i + 2];
+        if (r < 248 || g < 248 || b < 248) {
           return false;
         }
       }
@@ -543,7 +568,7 @@ async function extractScannedImageFromPage(
 
 /**
  * Fallback rendering strategy for scanned PDFs or pages whose content cannot be
- * properly interpreted by standard PDF.js.
+ * properly interpreted by standard PDF.js canvas execution.
  * Renders the page visually as an image onto the canvas preserving exact aspect ratio.
  */
 async function renderScannedPageFallback(
@@ -582,9 +607,92 @@ async function renderScannedPageFallback(
 
     let renderedSuccessfully = false;
 
-    // Strategy 1: If we have an extracted JPEG image (most common scanner format)
+    // Strategy 1: Extract image objects directly from PDF.js operator list & objects pool
+    // This handles 1-bit monochrome (CCITT / fax / NAPS2 black & white scans), JBIG2, and direct bitmaps
+    try {
+      const pdfJsDoc = await getPdfJsDocument(pdfBytes);
+      const page = await pdfJsDoc.getPage(pageNumber);
+      const ops = await page.getOperatorList();
+
+      for (let i = 0; i < ops.fnArray.length; i++) {
+        const fn = ops.fnArray[i];
+        if (
+          fn === (pdfjsLib as any).OPS.paintImageXObject ||
+          fn === (pdfjsLib as any).OPS.paintImageMaskXObject ||
+          fn === (pdfjsLib as any).OPS.paintInlineImageXObject
+        ) {
+          const objId = ops.argsArray[i]?.[0];
+          if (!objId) continue;
+
+          const imgObj: any = await new Promise((resolve) => {
+            try {
+              page.objs.get(objId, (data: any) => resolve(data));
+            } catch (_) {
+              resolve(null);
+            }
+          });
+
+          if (imgObj) {
+            if (imgObj.bitmap) {
+              fCtx.drawImage(imgObj.bitmap, 0, 0, renderWidth, renderHeight);
+              renderedSuccessfully = true;
+              break;
+            } else if (imgObj.data && imgObj.width > 0 && imgObj.height > 0) {
+              const w = imgObj.width;
+              const h = imgObj.height;
+              const tempC = document.createElement('canvas');
+              tempC.width = w;
+              tempC.height = h;
+              const tCtx = tempC.getContext('2d');
+              if (tCtx) {
+                const outImgData = tCtx.createImageData(w, h);
+                const u32 = new Uint32Array(outImgData.data.buffer);
+
+                if (imgObj.kind === 1) {
+                  // 1-bit monochrome mask (e.g. NAPS2 black & white scan)
+                  const src = imgObj.data;
+                  const rowBytes = (w + 7) >> 3;
+                  for (let r = 0; r < h; r++) {
+                    const rowOffset = r * rowBytes;
+                    const destOffset = r * w;
+                    for (let c = 0; c < w; c++) {
+                      const byte = src[rowOffset + (c >> 3)];
+                      const bit = (byte >> (7 - (c & 7))) & 1;
+                      // In 1-bit black & white scans: 0 is black, 1 is white
+                      u32[destOffset + c] = bit === 0 ? 0xff000000 : 0xffffffff;
+                    }
+                  }
+                } else if (imgObj.kind === 2) {
+                  // RGB 24bpp
+                  const src = imgObj.data;
+                  let srcPos = 0;
+                  for (let p = 0; p < w * h; p++) {
+                    const r = src[srcPos++];
+                    const g = src[srcPos++];
+                    const b = src[srcPos++];
+                    u32[p] = 0xff000000 | (b << 16) | (g << 8) | r;
+                  }
+                } else {
+                  // Standard RGBA 32bpp
+                  outImgData.data.set(imgObj.data);
+                }
+
+                tCtx.putImageData(outImgData, 0, 0);
+                fCtx.drawImage(tempC, 0, 0, renderWidth, renderHeight);
+                renderedSuccessfully = true;
+                break;
+              }
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[PDFRenderer] Operator list image extraction failed:', e);
+    }
+
+    // Strategy 2: If we have an extracted JPEG image (most common color/grayscale scanner format)
     const jpegCandidate = images.find((img) => img.type === 'jpeg');
-    if (jpegCandidate && jpegCandidate.bytes.length > 0) {
+    if (!renderedSuccessfully && jpegCandidate && jpegCandidate.bytes.length > 0) {
       try {
         const raw = jpegCandidate.bytes;
         const cleanBytes = new Uint8Array(raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength));
@@ -649,7 +757,7 @@ async function renderScannedPageFallback(
       } catch (_) {}
     }
 
-    // Strategy 2: If we have an extracted Flate image
+    // Strategy 3: If we have an extracted Flate image
     const flateCandidate = images.find((img) => img.type === 'flate');
     if (!renderedSuccessfully && flateCandidate && flateCandidate.width > 0 && flateCandidate.height > 0) {
       try {
@@ -700,7 +808,7 @@ async function renderScannedPageFallback(
       } catch (_) {}
     }
 
-    // Strategy 3: Isolated single-page PDF render via PDF.js
+    // Strategy 4: Isolated single-page PDF render via fresh PDF.js loading task
     if (!renderedSuccessfully) {
       try {
         const pdfDoc = await getCachedPdfLibDocument(pdfBytes);
@@ -720,14 +828,14 @@ async function renderScannedPageFallback(
         const renderTask = (singlePage as any).render({
           canvasContext: fCtx,
           viewport,
-          canvas: fallbackCanvas,
+          background: '#ffffff',
         });
         await renderTask.promise;
         renderedSuccessfully = true;
       } catch (_) {}
     }
 
-    // Strategy 4: Clean visual page placeholder if all decoders fail
+    // Strategy 5: Clean visual page placeholder if all decoders fail
     if (!renderedSuccessfully) {
       fCtx.fillStyle = '#fafafa';
       fCtx.fillRect(0, 0, renderWidth, renderHeight);
@@ -743,7 +851,7 @@ async function renderScannedPageFallback(
 
       fCtx.font = `normal ${Math.max(8, Math.round(11 * scale * dpr))}px sans-serif`;
       fCtx.fillStyle = '#94a3b8';
-      fCtx.fillText(`Doc. escaneado`, renderWidth / 2, renderHeight / 2 + 10 * dpr);
+      fCtx.fillText(`Documento escaneado`, renderWidth / 2, renderHeight / 2 + 10 * dpr);
     }
 
     // Atomically transfer to target canvas if still current
@@ -788,62 +896,105 @@ export async function renderPdfPageToCanvas(
   canvas: HTMLCanvasElement,
   scale: number = 1.0
 ): Promise<{ width: number; height: number; viewportWidth: number; viewportHeight: number }> {
-  // 1. Cancel previous ongoing render task on this canvas if any
+  // Check if this exact render (same canvas, bytes, page, scale) is already in flight
+  const existingState = (canvas as any)._activeRenderState;
+  if (
+    existingState &&
+    existingState.pdfBytes === pdfBytes &&
+    existingState.pageNumber === pageNumber &&
+    Math.abs(existingState.scale - scale) < 0.001 &&
+    existingState.promise
+  ) {
+    return existingState.promise;
+  }
+
+  // Cancel any different previous ongoing render task on this canvas
   cancelActiveCanvasRender(canvas);
 
-  // 2. Assign a unique token for this invocation to prevent out-of-order race conditions
+  // Assign a unique token for this invocation to prevent out-of-order race conditions
   const currentToken = ++renderSequence;
   (canvas as any)._currentRenderToken = currentToken;
 
-  let pdfJsDoc: any = null;
-  let page: any = null;
+  const renderExecutionPromise = (async () => {
+    let pdfJsDoc: any = null;
+    let page: any = null;
 
-  try {
-    pdfJsDoc = await getPdfJsDocument(pdfBytes);
-    page = await pdfJsDoc.getPage(pageNumber);
-  } catch (docLoadError) {
-    // PDF.js could not load the document or page; activate scanned page fallback immediately
-    return renderScannedPageFallback(pdfBytes, pageNumber, canvas, scale, currentToken);
-  }
+    try {
+      pdfJsDoc = await getPdfJsDocument(pdfBytes);
+      page = await pdfJsDoc.getPage(pageNumber);
+    } catch (docLoadError) {
+      return renderScannedPageFallback(pdfBytes, pageNumber, canvas, scale, currentToken);
+    }
 
-  // Check if cancelled while waiting for PDF document/page
-  if ((canvas as any)._currentRenderToken !== currentToken) {
-    return { width: 0, height: 0, viewportWidth: 0, viewportHeight: 0 };
-  }
+    // Check if cancelled while waiting for PDF document/page
+    if ((canvas as any)._currentRenderToken !== currentToken) {
+      return { width: 0, height: 0, viewportWidth: 0, viewportHeight: 0 };
+    }
 
-  // High-DPI rendering for sharp text
-  const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
-  const viewport = page.getViewport({ scale: scale * dpr });
-  const displayViewport = page.getViewport({ scale });
+    // High-DPI rendering for sharp text
+    const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
+    const viewport = page.getViewport({ scale: scale * dpr });
+    const displayViewport = page.getViewport({ scale });
 
-  // Use an isolated offscreen canvas to perform the PDF.js render.
-  const offscreenCanvas = document.createElement('canvas');
-  offscreenCanvas.width = viewport.width;
-  offscreenCanvas.height = viewport.height;
+    // Use an isolated offscreen canvas to perform the PDF.js render.
+    // Default alpha (alpha: true) is critical for PDF.js soft masks, image masks, and knockout stencils
+    const offscreenCanvas = document.createElement('canvas');
+    offscreenCanvas.width = Math.max(1, Math.round(viewport.width));
+    offscreenCanvas.height = Math.max(1, Math.round(viewport.height));
 
-  const offscreenCtx = offscreenCanvas.getContext('2d', { alpha: false });
-  if (!offscreenCtx) throw new Error('Could not obtain offscreen canvas 2D context');
+    const offscreenCtx = offscreenCanvas.getContext('2d');
+    if (!offscreenCtx) throw new Error('Could not obtain offscreen canvas 2D context');
 
-  // Fill crisp white background
-  offscreenCtx.fillStyle = '#ffffff';
-  offscreenCtx.fillRect(0, 0, offscreenCanvas.width, offscreenCanvas.height);
+    const renderContext = {
+      canvasContext: offscreenCtx,
+      viewport: viewport,
+      background: '#ffffff',
+    };
 
-  const renderContext = {
-    canvasContext: offscreenCtx,
-    viewport: viewport,
-  };
+    const renderTask = page.render(renderContext);
+    (canvas as any)._activeRenderTask = renderTask;
 
-  const renderTask = page.render(renderContext);
-  (canvas as any)._activeRenderTask = renderTask;
+    let renderSucceeded = false;
 
-  let renderSucceeded = false;
+    try {
+      await renderTask.promise;
+      // Validate that PDF.js did not produce an empty white canvas for an image document
+      const blank = isCanvasBlank(offscreenCanvas);
+      if (!blank) {
+        renderSucceeded = true;
+      } else {
+        console.warn(`[PDFRenderer] Page ${pageNumber} standard render is blank. Switching to scanned document fallback...`);
+      }
+    } catch (err: any) {
+      if (err?.name === 'RenderingCancelledException') {
+        return {
+          width: displayViewport.width,
+          height: displayViewport.height,
+          viewportWidth: displayViewport.width,
+          viewportHeight: displayViewport.height,
+        };
+      }
+      console.warn(`[PDFRenderer] Page ${pageNumber} standard render threw:`, err);
+    } finally {
+      if ((canvas as any)._activeRenderTask === renderTask) {
+        (canvas as any)._activeRenderTask = null;
+      }
+    }
 
-  try {
-    await renderTask.promise;
-    renderSucceeded = true;
-  } catch (err: any) {
-    if (err?.name === 'RenderingCancelledException') {
-      // Ignored - normal cancellation on rapid page change or zoom
+    // If PDF.js render succeeded and canvas is not blank, copy offscreen canvas directly to target canvas
+    if (renderSucceeded) {
+      if ((canvas as any)._currentRenderToken === currentToken) {
+        if (canvas.width !== viewport.width) canvas.width = viewport.width;
+        if (canvas.height !== viewport.height) canvas.height = viewport.height;
+        canvas.style.width = `${displayViewport.width}px`;
+        canvas.style.height = `${displayViewport.height}px`;
+
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(offscreenCanvas, 0, 0);
+        }
+      }
+
       return {
         width: displayViewport.width,
         height: displayViewport.height,
@@ -851,46 +1002,24 @@ export async function renderPdfPageToCanvas(
         viewportHeight: displayViewport.height,
       };
     }
-    // PDF.js render failed on this page (e.g. unsupported image decoder, corrupt stream);
-    // fallback will be triggered below
-  } finally {
-    if ((canvas as any)._activeRenderTask === renderTask) {
-      (canvas as any)._activeRenderTask = null;
-    }
-  }
 
-  // If PDF.js threw an error OR if it finished but the canvas is blank on a page with images:
-  if (!renderSucceeded) {
+    // If PDF.js threw an error or produced a blank white canvas, activate scanned fallback for this page
     return renderScannedPageFallback(pdfBytes, pageNumber, canvas, scale, currentToken);
-  }
+  })();
 
-  // Check if the rendered canvas came out completely blank white
-  if (isCanvasBlank(offscreenCanvas)) {
-    const hasImages = await pageHasImageXObjects(pdfBytes, pageNumber);
-    if (hasImages) {
-      // Page is a scanned image that PDF.js failed to draw; activate fallback
-      return renderScannedPageFallback(pdfBytes, pageNumber, canvas, scale, currentToken);
-    }
-  }
-
-  // 3. Atomically copy the rendered offscreen buffer to the target canvas
-  // if this render is still the latest one requested for this canvas
-  if ((canvas as any)._currentRenderToken === currentToken) {
-    if (canvas.width !== viewport.width) canvas.width = viewport.width;
-    if (canvas.height !== viewport.height) canvas.height = viewport.height;
-    canvas.style.width = `${displayViewport.width}px`;
-    canvas.style.height = `${displayViewport.height}px`;
-
-    const ctx = canvas.getContext('2d');
-    if (ctx) {
-      ctx.drawImage(offscreenCanvas, 0, 0);
-    }
-  }
-
-  return {
-    width: displayViewport.width,
-    height: displayViewport.height,
-    viewportWidth: displayViewport.width,
-    viewportHeight: displayViewport.height,
+  (canvas as any)._activeRenderState = {
+    token: currentToken,
+    pdfBytes,
+    pageNumber,
+    scale,
+    promise: renderExecutionPromise,
   };
+
+  try {
+    return await renderExecutionPromise;
+  } finally {
+    if ((canvas as any)._activeRenderState?.token === currentToken) {
+      (canvas as any)._activeRenderState = null;
+    }
+  }
 }
