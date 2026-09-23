@@ -48,7 +48,6 @@ export const StampCanvas: React.FC<StampCanvasProps> = ({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [zoomScale, setZoomScale] = useState<number>(1.1);
   const [isRendering, setIsRendering] = useState<boolean>(false);
-  const [isDragOver, setIsDragOver] = useState<boolean>(false);
 
   // Interaction dragging states
   const [isDraggingGroup, setIsDraggingGroup] = useState<boolean>(false);
@@ -367,24 +366,6 @@ export const StampCanvas: React.FC<StampCanvasProps> = ({
       className="flex-1 flex flex-col h-full bg-slate-100 dark:bg-slate-700 overflow-hidden select-none relative"
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
-      onDragOver={(e) => {
-        e.preventDefault();
-        if (e.dataTransfer.types && Array.from(e.dataTransfer.types).includes('Files')) {
-          setIsDragOver(true);
-        }
-      }}
-      onDragLeave={(e) => {
-        if (e.currentTarget.contains(e.relatedTarget as Node)) return;
-        setIsDragOver(false);
-      }}
-      onDrop={(e) => {
-        e.preventDefault();
-        setIsDragOver(false);
-        const file = e.dataTransfer.files?.[0];
-        if (file && onUploadPdf) {
-          onUploadPdf(file);
-        }
-      }}
     >
       {/* Top Toolbar: Navigation, Document info & Upload, Zoom & Status */}
       <div className="min-h-12 py-1.5 px-3 md:px-4 bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 flex flex-wrap items-center justify-between gap-2 shadow-2xs z-20">
@@ -518,23 +499,6 @@ export const StampCanvas: React.FC<StampCanvasProps> = ({
 
       {/* Main Document Workspace Area */}
       <div className="flex-1 overflow-auto p-6 sm:p-10 flex items-start justify-center relative">
-        {/* Drag and Drop File Hover Overlay */}
-        {isDragOver && (
-          <div className="absolute inset-0 z-50 bg-blue-600/20 backdrop-blur-xs border-4 border-dashed border-blue-500 rounded-lg flex flex-col items-center justify-center p-6 pointer-events-none">
-            <div className="bg-white dark:bg-slate-800 p-6 rounded-2xl shadow-2xl flex flex-col items-center gap-3 border border-blue-200 dark:border-blue-700">
-              <div className="w-14 h-14 rounded-2xl bg-blue-50 dark:bg-blue-900/40 text-blue-600 flex items-center justify-center">
-                <Upload className="w-8 h-8" />
-              </div>
-              <p className="text-base font-bold text-slate-800 dark:text-slate-100">
-                Soltá tu archivo PDF acá
-              </p>
-              <p className="text-xs text-slate-500 dark:text-slate-400">
-                Se cargará de inmediato manteniendo la posición y escala de tu sello
-              </p>
-            </div>
-          </div>
-        )}
-
         {/* Loading Overlay when a document is being parsed */}
         {isLoadingUpload && (
           <div className="absolute inset-0 z-50 bg-slate-900/40 backdrop-blur-2xs flex flex-col items-center justify-center p-6">

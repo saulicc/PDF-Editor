@@ -31,6 +31,7 @@ import {
   SplitRange,
 } from '../lib/pdfTools';
 import { usePdfThumbnails } from '../lib/useThumbnails';
+import { GlobalPdfDropOverlay } from './GlobalPdfDropOverlay';
 
 interface SplitRangesToolProps {
   onBack: () => void;
@@ -295,6 +296,12 @@ export default function SplitRangesTool({ onBack }: SplitRangesToolProps) {
   if (!docInfo) {
     return (
       <div className="h-screen w-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950 p-4 relative">
+        <GlobalPdfDropOverlay
+          onFileDrop={handleUpload}
+          title="Soltá tu archivo PDF en cualquier parte"
+          description="Se abrirá para que puedas dividirlo por rangos o extraer páginas."
+        />
+
         <button
           type="button"
           onClick={onBack}
@@ -361,7 +368,13 @@ export default function SplitRangesTool({ onBack }: SplitRangesToolProps) {
   }
 
   return (
-    <div className="min-h-screen w-full bg-[#f4f5f8] dark:bg-slate-950 flex flex-col">
+    <div className="min-h-screen w-full bg-[#f4f5f8] dark:bg-slate-950 flex flex-col relative">
+      <GlobalPdfDropOverlay
+        onFileDrop={handleUpload}
+        title="Soltá tu archivo PDF en cualquier parte"
+        description="Se cargará el nuevo documento para dividir o extraer páginas."
+      />
+
       {/* Top Header Bar */}
       <header className="h-14 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center justify-between px-4 sm:px-6 shrink-0 z-20">
         <div className="flex items-center gap-3">

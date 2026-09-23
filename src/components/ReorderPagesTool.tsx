@@ -19,6 +19,7 @@ import { DocumentInfo } from '../types';
 import { loadUserPdfDocument } from '../lib/pdfRenderer';
 import { extractPages, downloadBytes } from '../lib/pdfTools';
 import { usePdfThumbnails } from '../lib/useThumbnails';
+import { GlobalPdfDropOverlay } from './GlobalPdfDropOverlay';
 
 interface ReorderPagesToolProps {
   onBack: () => void;
@@ -88,6 +89,12 @@ export default function ReorderPagesTool({ onBack }: ReorderPagesToolProps) {
   if (!docInfo) {
     return (
       <div className="h-screen w-screen flex items-center justify-center bg-slate-100 dark:bg-slate-950 p-4 relative">
+        <GlobalPdfDropOverlay
+          onFileDrop={handleUpload}
+          title="Soltá tu archivo PDF en cualquier parte"
+          description="Se cargarán sus páginas para que puedas reorganizar el orden visualmente."
+        />
+
         <button
           type="button"
           onClick={onBack}
@@ -145,7 +152,13 @@ export default function ReorderPagesTool({ onBack }: ReorderPagesToolProps) {
   }
 
   return (
-    <div className="h-screen w-screen flex flex-col bg-slate-100 dark:bg-slate-950">
+    <div className="h-screen w-screen flex flex-col bg-slate-100 dark:bg-slate-950 relative">
+      <GlobalPdfDropOverlay
+        onFileDrop={handleUpload}
+        title="Soltá tu archivo PDF en cualquier parte"
+        description="Se cargará el nuevo documento para reorganizar sus páginas."
+      />
+
       {/* Top bar */}
       <div className="bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 px-4 py-3 flex items-center justify-between gap-3 shadow-2xs shrink-0">
         <div className="flex items-center gap-3 min-w-0">

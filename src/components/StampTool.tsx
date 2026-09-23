@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   DocumentInfo,
   PageRangeType,
@@ -17,12 +17,14 @@ import { StampCanvas } from './StampCanvas';
 import { ExportModal } from './ExportModal';
 import { useTheme } from '../lib/useTheme';
 import { Upload, FileText, Stamp, ArrowLeft } from 'lucide-react';
+import { GlobalPdfDropOverlay } from './GlobalPdfDropOverlay';
 
 interface StampToolProps {
   onBack: () => void;
+  initialFile?: File | null;
 }
 
-export default function StampTool({ onBack }: StampToolProps) {
+export default function StampTool({ onBack, initialFile }: StampToolProps) {
   const { mode: themeMode, setMode: setThemeMode } = useTheme();
 
   const [docInfo, setDocInfo] = useState<DocumentInfo | null>(null);
@@ -90,6 +92,12 @@ export default function StampTool({ onBack }: StampToolProps) {
   const [isExportModalOpen, setIsExportModalOpen] = useState<boolean>(false);
   const [isLoadingUpload, setIsLoadingUpload] = useState<boolean>(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (initialFile) {
+      handleUploadPdf(initialFile);
+    }
+  }, [initialFile]);
 
   const handleUploadPdf = async (
     file: File,
@@ -199,6 +207,12 @@ export default function StampTool({ onBack }: StampToolProps) {
   if (!docInfo) {
     return (
       <div className="h-screen w-screen flex items-center justify-center bg-slate-100 dark:bg-slate-950 p-4 relative">
+        <GlobalPdfDropOverlay
+          onFileDrop={handleUploadPdf}
+          title="Soltá tu archivo PDF en cualquier parte"
+          description="Se abrirá directamente en el visor de sellos para comenzar a trabajar."
+        />
+
         <button
           type="button"
           onClick={onBack}
@@ -271,7 +285,14 @@ export default function StampTool({ onBack }: StampToolProps) {
   const endFolioNumber = stampGroup.folio.startNumber + targetPages.length - 1;
 
   return (
-    <div className="h-screen w-screen flex flex-col lg:flex-row overflow-hidden bg-slate-100 dark:bg-slate-950">
+    <div className="h-screen w-screen flex flex-col lg:flex-row overflow-hidden bg-slate-100 dark:bg-slate-950 relative">
+      {/* Full screen Drag & Drop PDF Dropzone Overlay */}
+      <GlobalPdfDropOverlay
+        onFileDrop={handleUploadPdf}
+        title="Soltá tu archivo PDF en cualquier parte"
+        description="Se cargará de inmediato en el visor manteniendo la escala y posición de tu sello."
+      />
+
       {/* Control Sidebar: Stamp import, Folio calibration, Page range, Export */}
       <SidebarControls
         docInfo={docInfo}

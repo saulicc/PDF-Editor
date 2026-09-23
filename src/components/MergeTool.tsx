@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { mergePdfFiles, downloadBytes } from '../lib/pdfTools';
 import { renderPdfPageToCanvas } from '../lib/pdfRenderer';
+import { GlobalPdfDropOverlay } from './GlobalPdfDropOverlay';
 
 interface MergeToolProps {
   onBack: () => void;
@@ -105,7 +106,7 @@ export default function MergeTool({ onBack }: MergeToolProps) {
     });
   }, [items]);
 
-  const addFiles = (newFiles: FileList | null) => {
+  const addFiles = (newFiles: FileList | File[] | null) => {
     if (!newFiles) return;
     const pdfFiles = Array.from(newFiles).filter(
       (f) => f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf')
@@ -167,7 +168,14 @@ export default function MergeTool({ onBack }: MergeToolProps) {
   };
 
   return (
-    <div className="min-h-screen w-full bg-slate-100 dark:bg-slate-950 flex flex-col items-center px-4 py-8">
+    <div className="min-h-screen w-full bg-slate-100 dark:bg-slate-950 flex flex-col items-center px-4 py-8 relative">
+      <GlobalPdfDropOverlay
+        onFileDrop={(file) => addFiles([file])}
+        onFilesDrop={(files) => addFiles(files)}
+        title="Soltá los archivos PDF acá"
+        description="Se agregarán directamente a la lista para unir y reordenar."
+      />
+
       <div className="w-full max-w-4xl">
         <button
           type="button"
