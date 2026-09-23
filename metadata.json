@@ -1,0 +1,6 @@
+{
+  "name": "Sello y Foliador Vectorial PDF",
+  "description": "Estampa sellos SVG y numeración de folios como una única unidad compuesta vectorial en documentos PDF",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

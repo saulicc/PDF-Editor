@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sello y Foliador Vectorial PDF</title>
+    <meta name="description" content="Estampa sellos SVG y numeración de folios como una única unidad compuesta vectorial en documentos PDF" />
+    <meta property="og:title" content="Sello y Foliador Vectorial PDF" />
+    <meta property="og:description" content="Estampa sellos SVG y numeración de folios como una única unidad compuesta vectorial en documentos PDF" />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+  </head>
+  <body>
+    <script>
+      (function () {
+        try {
+          var stored = localStorage.getItem('stampfolio-theme');
+          var isDark =
+            stored === 'dark' ||
+            (stored !== 'light' &&
+              window.matchMedia('(prefers-color-scheme: dark)').matches);
+          if (isDark) document.documentElement.classList.add('dark');
+        } catch (e) {}
+      })();
+    </script>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+

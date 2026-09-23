@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 896 1193" width="896" height="1193">
+  <!-- Solid white backing for maximum document legibility and opaque placement -->
+  <rect x="16" y="16" width="864" height="1161" rx="36" fill="#ffffff" stroke="#000000" stroke-width="8" />
+  
+  <!-- Outer decorative border -->
+  <rect x="36" y="36" width="824" height="1121" rx="24" fill="none" stroke="#000000" stroke-width="3" stroke-dasharray="14 8" />
+  
+  <!-- Inner crisp framing border -->
+  <rect x="48" y="48" width="800" height="1097" rx="18" fill="none" stroke="#000000" stroke-width="2" />
+
+  <!-- Upper Inscription: Gobierno de la Provincia de Corrientes -->
+  <text x="448" y="112" font-family="'Times New Roman', Times, Georgia, serif" font-size="34" font-weight="bold" fill="#000000" text-anchor="middle" letter-spacing="1">GOBIERNO DE LA PROVINCIA DE CORRIENTES</text>
+  <text x="448" y="156" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="bold" fill="#000000" text-anchor="middle" letter-spacing="2">PODER EJECUTIVO</text>
+  <line x1="80" y1="182" x2="816" y2="182" stroke="#000000" stroke-width="3" />
+
+  <!-- Institution Designation -->
+  <text x="448" y="244" font-family="'Times New Roman', Times, Georgia, serif" font-size="52" font-weight="bold" fill="#000000" text-anchor="middle" letter-spacing="2">INSTITUTO DE CULTURA</text>
+  <text x="448" y="294" font-family="Arial, Helvetica, sans-serif" font-size="28" font-weight="bold" fill="#000000" text-anchor="middle" letter-spacing="2.5">PROVINCIA DE CORRIENTES</text>
+  <line x1="120" y1="322" x2="776" y2="322" stroke="#000000" stroke-width="2.5" stroke-dasharray="8 6" />
+
+  <!-- Escudo Oficial de la Provincia de Corrientes -->
+  <!-- Sol de Mayo Radiante -->
+  <circle cx="448" cy="375" r="22" fill="#fbbf24" stroke="#000000" stroke-width="3" />
+  <line x1="448" y1="335" x2="448" y2="348" stroke="#000000" stroke-width="3.5" stroke-linecap="round" />
+  <line x1="448" y1="402" x2="448" y2="415" stroke="#000000" stroke-width="3.5" stroke-linecap="round" />
+  <line x1="408" y1="375" x2="421" y2="375" stroke="#000000" stroke-width="3.5" stroke-linecap="round" />
+  <line x1="475" y1="375" x2="488" y2="375" stroke="#000000" stroke-width="3.5" stroke-linecap="round" />
+  <line x1="420" y1="347" x2="429" y2="356" stroke="#000000" stroke-width="3.5" stroke-linecap="round" />
+  <line x1="467" y1="394" x2="476" y2="403" stroke="#000000" stroke-width="3.5" stroke-linecap="round" />
+  <line x1="420" y1="403" x2="429" y2="394" stroke="#000000" stroke-width="3.5" stroke-linecap="round" />
+  <line x1="467" y1="356" x2="476" y2="347" stroke="#000000" stroke-width="3.5" stroke-linecap="round" />
+
+  <!-- Óvalo Heráldico Central -->
+  <ellipse cx="448" cy="485" rx="88" ry="102" fill="#f8fafc" stroke="#000000" stroke-width="4.5" />
+  <line x1="360" y1="485" x2="536" y2="485" stroke="#000000" stroke-width="3" />
+
+  <!-- Pica y Gorro Frigio -->
+  <line x1="448" y1="420" x2="448" y2="550" stroke="#000000" stroke-width="5" stroke-linecap="round" />
+  <path d="M 448 412 C 426 412 424 438 448 438 C 472 438 470 412 448 412 Z" fill="#dc2626" stroke="#000000" stroke-width="3" />
+
+  <!-- Manos Entrelazadas -->
+  <circle cx="435" cy="495" r="9" fill="#000000" />
+  <circle cx="461" cy="495" r="9" fill="#000000" />
+  <path d="M 424 492 L 442 492 L 454 498 L 472 498" stroke="#000000" stroke-width="4" fill="none" stroke-linecap="round" />
+
+  <!-- Ramas de Laurel a la izquierda y derecha -->
+  <path d="M 335 490 C 310 480 300 455 315 440 C 325 460 340 475 335 490 Z" fill="#000000" />
+  <path d="M 325 520 C 300 515 290 495 305 480 C 315 500 330 510 325 520 Z" fill="#000000" />
+  <path d="M 335 550 C 310 545 305 530 320 515 C 330 535 340 545 335 550 Z" fill="#000000" />
+  <path d="M 561 490 C 586 480 596 455 581 440 C 571 460 556 475 561 490 Z" fill="#000000" />
+  <path d="M 571 520 C 596 515 606 495 591 480 C 581 500 566 510 571 520 Z" fill="#000000" />
+  <path d="M 561 550 C 586 545 591 530 576 515 C 566 535 556 545 561 550 Z" fill="#000000" />
+
+  <!-- Sección Departamental -->
+  <text x="448" y="635" font-family="Arial, Helvetica, sans-serif" font-size="28" font-weight="bold" fill="#000000" text-anchor="middle" letter-spacing="1">MESA GENERAL DE ENTRADAS Y EXPEDIENTES</text>
+  <text x="448" y="672" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="bold" fill="#000000" text-anchor="middle" letter-spacing="1.5">FOLIATURA DE ACTUACIONES</text>
+  <line x1="80" y1="695" x2="816" y2="695" stroke="#000000" stroke-width="3" />
+
+  <!-- Casilla Integrada de Folio -->
+  <rect x="90" y="730" width="716" height="150" rx="16" fill="#f8fafc" stroke="#000000" stroke-width="4.5" />
+  <rect x="102" y="742" width="692" height="126" rx="10" fill="none" stroke="#000000" stroke-width="2" stroke-dasharray="6 4" />
+  
+  <!-- Guías de esquina de casilla -->
+  <path d="M 112 766 L 112 754 L 124 754" stroke="#000000" stroke-width="2.5" fill="none" />
+  <path d="M 782 766 L 782 754 L 770 754" stroke="#000000" stroke-width="2.5" fill="none" />
+  <path d="M 112 844 L 112 856 L 124 856" stroke="#000000" stroke-width="2.5" fill="none" />
+  <path d="M 782 844 L 782 856 L 770 856" stroke="#000000" stroke-width="2.5" fill="none" />
+
+  <!-- Palabra "Folio" integrada en el SVG oficial -->
+  <text x="145" y="822" font-family="Arial, Helvetica, sans-serif" font-size="52" font-weight="bold" fill="#000000">Folio</text>
+
+  <!-- Línea guía sutil para el número dentro de la casilla -->
+  <line x1="310" y1="835" x2="760" y2="835" stroke="#000000" stroke-width="2" stroke-dasharray="4 4" />
+
+  <!-- Pie Administrativo y Validez Legal -->
+  <line x1="80" y1="915" x2="816" y2="915" stroke="#000000" stroke-width="2.5" />
+  <text x="448" y="960" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="bold" fill="#000000" text-anchor="middle" letter-spacing="1">REGISTRO DE DOCUMENTACIÓN OFICIAL</text>
+  <text x="448" y="1005" font-family="'Times New Roman', Times, Georgia, serif" font-size="22" font-weight="bold" fill="#000000" text-anchor="middle">San Juan 546 - W3400 Corrientes • República Argentina</text>
+  <text x="448" y="1045" font-family="Arial, Helvetica, sans-serif" font-size="18" fill="#4b5563" text-anchor="middle">Sello Oficial Digitalizado • Validez Administrativa Legal</text>
+  <rect x="120" y="1080" width="656" height="42" rx="8" fill="#f3f4f6" stroke="#000000" stroke-width="1.8" />
+  <text x="448" y="1108" font-family="monospace, Courier, monospace" font-size="17" font-weight="bold" fill="#111827" text-anchor="middle" letter-spacing="2">EXPEDIENTE ADMINISTRATIVO</text>
+</svg>
