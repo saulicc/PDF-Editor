@@ -84,44 +84,68 @@ export async function analyzeFileDpi(
   file: File,
   targetDpiThreshold = 225
 ): Promise<DpiAnalysisResult> {
-  const arrayBuffer = await file.arrayBuffer();
-  const pdfBytes = new Uint8Array(arrayBuffer);
-  const pdfDoc = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
-  const totalPages = pdfDoc.getPageCount();
+  const analysisPromise = (async (): Promise<DpiAnalysisResult> => {
+    const arrayBuffer = await file.arrayBuffer();
+    const pdfBytes = new Uint8Array(arrayBuffer);
+    const pdfDoc = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
+    const totalPages = pdfDoc.getPageCount();
 
-  const pagesInfo: PageDpiInfo[] = [];
-  let maxDpiFound = 0;
-  let totalDpiSum = 0;
+    const pagesInfo: PageDpiInfo[] = [];
+    let maxDpiFound = 0;
+    let totalDpiSum = 0;
 
-  for (let i = 0; i < totalPages; i++) {
-    const page = pdfDoc.getPage(i);
-    const { width: pWidth, height: pHeight } = page.getSize();
-    const widthInches = Math.max(0.1, pWidth / 72);
-    const heightInches = Math.max(0.1, pHeight / 72);
+    // Para PDFs con muchísimas páginas (ej: 50+ o 100+ fojas), inspeccionamos las primeras 10
+    // y una muestra representativa para que el análisis sea instantáneo (menos de 1 segundo)
+    const pagesToInspect: number[] = [];
+    if (totalPages <= 15) {
+      for (let i = 0; i < totalPages; i++) pagesToInspect.push(i);
+    } else {
+      // Primeras 6 páginas
+      for (let i = 0; i < 6; i++) pagesToInspect.push(i);
+      // Muestras intermedias y final
+      const step = Math.max(1, Math.floor(totalPages / 8));
+      for (let i = 6; i < totalPages; i += step) {
+        if (!pagesToInspect.includes(i)) pagesToInspect.push(i);
+      }
+      if (!pagesToInspect.includes(totalPages - 1)) pagesToInspect.push(totalPages - 1);
+    }
 
-    let pageMaxDpi = 0;
+    for (const i of pagesToInspect) {
+      const page = pdfDoc.getPage(i);
+      const { width: pWidth, height: pHeight } = page.getSize();
+      const widthInches = Math.max(0.1, pWidth / 72);
+      const heightInches = Math.max(0.1, pHeight / 72);
 
-    try {
-      const resourcesRef = page.node.get(PDFName.of('Resources'));
-      if (resourcesRef) {
-        const resources = pdfDoc.context.lookup(resourcesRef) as PDFDict;
-        if (resources && resources instanceof PDFDict) {
-          const xObjectRef = resources.get(PDFName.of('XObject'));
-          if (xObjectRef) {
-            const xObjectDict = pdfDoc.context.lookup(xObjectRef) as PDFDict;
-            if (xObjectDict && xObjectDict instanceof PDFDict) {
-              for (const key of xObjectDict.keys()) {
-                const obj = pdfDoc.context.lookup(xObjectDict.get(key)) as any;
-                if (obj?.dict?.get(PDFName.of('Subtype'))?.toString() === '/Image') {
-                  const imgW = obj.dict.get(PDFName.of('Width'))?.asNumber?.() || 0;
-                  const imgH = obj.dict.get(PDFName.of('Height'))?.asNumber?.() || 0;
+      let pageMaxDpi = 0;
 
-                  if (imgW > 0 && imgH > 0) {
-                    const dpiW = Math.round(imgW / widthInches);
-                    const dpiH = Math.round(imgH / heightInches);
-                    const dpi = Math.max(dpiW, dpiH);
-                    if (dpi > pageMaxDpi) {
-                      pageMaxDpi = dpi;
+      try {
+        const resourcesRef = page.node.get(PDFName.of('Resources'));
+        if (resourcesRef) {
+          const resources = pdfDoc.context.lookup(resourcesRef) as PDFDict;
+          if (resources && resources instanceof PDFDict) {
+            const xObjectRef = resources.get(PDFName.of('XObject'));
+            if (xObjectRef) {
+              const xObjectDict = pdfDoc.context.lookup(xObjectRef) as PDFDict;
+              if (xObjectDict && xObjectDict instanceof PDFDict) {
+                for (const key of xObjectDict.keys()) {
+                  const rawVal = xObjectDict.get(key);
+                  const obj = pdfDoc.context.lookup(rawVal) as any;
+                  if (obj?.dict?.get(PDFName.of('Subtype'))?.toString() === '/Image') {
+                    const rawW = obj.dict.get(PDFName.of('Width'));
+                    const rawH = obj.dict.get(PDFName.of('Height'));
+                    const widthObj = pdfDoc.context.lookup(rawW) as any;
+                    const heightObj = pdfDoc.context.lookup(rawH) as any;
+
+                    const imgW = widthObj?.asNumber?.() ?? Number(widthObj?.value) ?? 0;
+                    const imgH = heightObj?.asNumber?.() ?? Number(heightObj?.value) ?? 0;
+
+                    if (imgW > 0 && imgH > 0) {
+                      const dpiW = Math.round(imgW / widthInches);
+                      const dpiH = Math.round(imgH / heightInches);
+                      const dpi = Math.max(dpiW, dpiH);
+                      if (dpi > pageMaxDpi) {
+                        pageMaxDpi = dpi;
+                      }
                     }
                   }
                 }
@@ -129,54 +153,75 @@ export async function analyzeFileDpi(
             }
           }
         }
-      }
-    } catch (_) {}
+      } catch (_) {}
 
-    // Si no encontramos imágenes explícitas en XObjects pero el archivo es extremadamente pesado
-    // (ej. > 2.5 MB por página), estimamos que contiene escaneo de alta resolución
-    if (pageMaxDpi === 0) {
-      const bytesPerPage = file.size / Math.max(1, totalPages);
-      if (bytesPerPage > 4 * 1024 * 1024) {
-        pageMaxDpi = 1200;
-      } else if (bytesPerPage > 1.8 * 1024 * 1024) {
-        pageMaxDpi = 600;
-      } else if (bytesPerPage > 800 * 1024) {
-        pageMaxDpi = 300;
-      } else {
-        pageMaxDpi = 150; // Típico documento digital o escaneo liviano
+      // Si no encontramos imágenes explícitas en XObjects pero el archivo es pesado,
+      // estimamos por el peso en bytes por página
+      if (pageMaxDpi === 0) {
+        const bytesPerPage = file.size / Math.max(1, totalPages);
+        if (bytesPerPage > 3.5 * 1024 * 1024) {
+          pageMaxDpi = 1200;
+        } else if (bytesPerPage > 1.5 * 1024 * 1024) {
+          pageMaxDpi = 600;
+        } else if (bytesPerPage > 600 * 1024) {
+          pageMaxDpi = 300;
+        } else {
+          pageMaxDpi = 150;
+        }
       }
+
+      if (pageMaxDpi > maxDpiFound) {
+        maxDpiFound = pageMaxDpi;
+      }
+      totalDpiSum += pageMaxDpi;
+
+      pagesInfo.push({
+        pageNumber: i + 1,
+        widthPt: pWidth,
+        heightPt: pHeight,
+        dpi: pageMaxDpi,
+        hasHighResImage: pageMaxDpi > targetDpiThreshold,
+      });
     }
 
-    if (pageMaxDpi > maxDpiFound) {
-      maxDpiFound = pageMaxDpi;
-    }
-    totalDpiSum += pageMaxDpi;
+    const inspectedCount = Math.max(1, pagesInfo.length);
+    const avgDetectedDpi = Math.round(totalDpiSum / inspectedCount);
+    const needsDownsample = maxDpiFound > targetDpiThreshold;
 
-    pagesInfo.push({
-      pageNumber: i + 1,
-      widthPt: pWidth,
-      heightPt: pHeight,
-      dpi: pageMaxDpi,
-      hasHighResImage: pageMaxDpi > targetDpiThreshold,
-    });
-  }
+    return {
+      id: `${file.name}-${file.size}-${Date.now()}-${Math.random()}`,
+      file,
+      fileName: file.name,
+      originalSize: file.size,
+      totalPages,
+      maxDetectedDpi: maxDpiFound,
+      avgDetectedDpi,
+      needsDownsample,
+      isAnalyzing: false,
+      pagesInfo,
+    };
+  })();
 
-  const avgDetectedDpi = totalPages > 0 ? Math.round(totalDpiSum / totalPages) : 0;
-  // Requiere reducción si alguna página o el máximo supera el umbral (ej: 225 DPI)
-  const needsDownsample = maxDpiFound > targetDpiThreshold;
+  // Timeout guard de 8 segundos: si el PDF es colosal o complejo, nunca dejar la app colgada
+  const timeoutPromise = new Promise<DpiAnalysisResult>((resolve) => {
+    setTimeout(() => {
+      const estimatedDpi = file.size > 2 * 1024 * 1024 ? 1200 : 200;
+      resolve({
+        id: `${file.name}-${file.size}-${Date.now()}-${Math.random()}`,
+        file,
+        fileName: file.name,
+        originalSize: file.size,
+        totalPages: 1,
+        maxDetectedDpi: estimatedDpi,
+        avgDetectedDpi: estimatedDpi,
+        needsDownsample: estimatedDpi > targetDpiThreshold,
+        isAnalyzing: false,
+        pagesInfo: [],
+      });
+    }, 8000);
+  });
 
-  return {
-    id: `${file.name}-${file.size}-${Date.now()}-${Math.random()}`,
-    file,
-    fileName: file.name,
-    originalSize: file.size,
-    totalPages,
-    maxDetectedDpi: maxDpiFound,
-    avgDetectedDpi,
-    needsDownsample,
-    isAnalyzing: false,
-    pagesInfo,
-  };
+  return Promise.race([analysisPromise, timeoutPromise]);
 }
 
 /**

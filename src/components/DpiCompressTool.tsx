@@ -46,7 +46,6 @@ function formatBytes(bytes: number): string {
 
 export default function DpiCompressTool({ onBack }: DpiCompressToolProps) {
   const [analyzedItems, setAnalyzedItems] = useState<DpiAnalysisResult[]>([]);
-  const [isAnalyzingQueue, setIsAnalyzingQueue] = useState(false);
   const [targetDpi, setTargetDpi] = useState<number>(200);
   const [jpegQuality, setJpegQuality] = useState<number>(0.82);
 
@@ -69,7 +68,7 @@ export default function DpiCompressTool({ onBack }: DpiCompressToolProps) {
     setErrorMsg(null);
     setResults(null);
 
-    // Creamos placeholders de análisis
+    // Creamos placeholders de análisis visibles inmediatamente
     const placeholders: DpiAnalysisResult[] = pdfFiles.map((file, i) => ({
       id: `${file.name}-${file.size}-${Date.now()}-${i}-${Math.random()}`,
       file,
@@ -84,52 +83,32 @@ export default function DpiCompressTool({ onBack }: DpiCompressToolProps) {
     }));
 
     setAnalyzedItems((prev) => [...prev, ...placeholders]);
+
+    // Analizamos cada archivo de forma secuencial
+    for (const item of placeholders) {
+      try {
+        const analysis = await analyzeFileDpi(item.file, targetDpi + 25);
+        setAnalyzedItems((prev) =>
+          prev.map((it) => (it.id === item.id ? { ...analysis, id: item.id, isAnalyzing: false } : it))
+        );
+      } catch (err) {
+        console.error('Error analizando archivo:', err);
+        const fallbackDpi = item.file.size > 2 * 1024 * 1024 ? 1200 : 200;
+        setAnalyzedItems((prev) =>
+          prev.map((it) =>
+            it.id === item.id
+              ? {
+                  ...it,
+                  isAnalyzing: false,
+                  maxDetectedDpi: fallbackDpi,
+                  needsDownsample: fallbackDpi > targetDpi + 25,
+                }
+              : it
+          )
+        );
+      }
+    }
   };
-
-  // Efecto para procesar la cola de análisis de DPI de archivos entrantes
-  useEffect(() => {
-    const unanalyzed = analyzedItems.filter((it) => it.isAnalyzing);
-    if (unanalyzed.length === 0 || isAnalyzingQueue) return;
-
-    let isCancelled = false;
-    setIsAnalyzingQueue(true);
-
-    (async () => {
-      for (const item of unanalyzed) {
-        if (isCancelled) break;
-        try {
-          const analysis = await analyzeFileDpi(item.file, targetDpi + 25);
-          if (isCancelled) break;
-          setAnalyzedItems((prev) =>
-            prev.map((it) => (it.id === item.id ? { ...analysis, id: it.id } : it))
-          );
-        } catch (err) {
-          console.error('Error analizando archivo:', err);
-          if (!isCancelled) {
-            setAnalyzedItems((prev) =>
-              prev.map((it) =>
-                it.id === item.id
-                  ? {
-                      ...it,
-                      isAnalyzing: false,
-                      maxDetectedDpi: 0,
-                      needsDownsample: false,
-                    }
-                  : it
-              )
-            );
-          }
-        }
-      }
-      if (!isCancelled) {
-        setIsAnalyzingQueue(false);
-      }
-    })();
-
-    return () => {
-      isCancelled = true;
-    };
-  }, [analyzedItems, targetDpi, isAnalyzingQueue]);
 
   const removeFile = (id: string) => {
     setAnalyzedItems((prev) => prev.filter((it) => it.id !== id));
@@ -704,7 +683,7 @@ export default function DpiCompressTool({ onBack }: DpiCompressToolProps) {
                 <div className="mt-4 flex flex-col items-center gap-2">
                   <button
                     type="button"
-                    disabled={analyzedItems.length === 0 || isAnalyzingQueue}
+                    disabled={analyzedItems.length === 0 || analyzedItems.some((it) => it.isAnalyzing)}
                     onClick={handleProcessBatch}
                     className="w-full max-w-md py-3.5 px-4 bg-teal-600 hover:bg-teal-700 active:bg-teal-800 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold rounded-xl shadow-md flex items-center justify-center gap-2 text-sm transition-all cursor-pointer"
                   >
