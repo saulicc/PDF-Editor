@@ -80,20 +80,34 @@ export function parseSplitRangesString(str: string, totalPages: number): SplitRa
 
 /**
  * Divide un PDF en varios archivos, uno por cada rango indicado.
+ * Carga el documento origen una única vez en memoria para máxima velocidad.
  */
 export async function splitPdfByRanges(
   pdfBytes: Uint8Array,
-  ranges: SplitRange[]
+  ranges: SplitRange[],
+  onProgress?: (current: number, total: number) => void
 ): Promise<{ name: string; bytes: Uint8Array }[]> {
   const results: { name: string; bytes: Uint8Array }[] = [];
+  const srcDoc = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
+  const padCount = Math.max(2, String(ranges.length).length);
 
   for (let i = 0; i < ranges.length; i++) {
     const { start, end } = ranges[i];
     const indices: number[] = [];
     for (let p = start; p <= end; p++) indices.push(p - 1);
-    const bytes = await extractPages(pdfBytes, indices);
+
+    const newDoc = await PDFDocument.create();
+    const copiedPages = await newDoc.copyPages(srcDoc, indices);
+    copiedPages.forEach((p) => newDoc.addPage(p));
+    const bytes = await newDoc.save();
+
     const rangeLabel = start === end ? `pag_${start}` : `pag_${start}-${end}`;
-    results.push({ name: `parte_${i + 1}_${rangeLabel}.pdf`, bytes });
+    const partNum = String(i + 1).padStart(padCount, '0');
+    results.push({ name: `parte_${partNum}_${rangeLabel}.pdf`, bytes });
+
+    if (onProgress) {
+      onProgress(i + 1, ranges.length);
+    }
   }
 
   return results;
@@ -117,15 +131,30 @@ export async function mergeRangesToSinglePdf(
 
 /**
  * Extrae cada página indicada como un archivo individual independiente.
+ * Carga el documento origen una única vez en memoria para máxima velocidad.
  */
 export async function extractPagesAsSeparateFiles(
   pdfBytes: Uint8Array,
-  pageNumbers: number[]
+  pageNumbers: number[],
+  onProgress?: (current: number, total: number) => void
 ): Promise<{ name: string; bytes: Uint8Array }[]> {
   const results: { name: string; bytes: Uint8Array }[] = [];
-  for (const pageNum of pageNumbers) {
-    const bytes = await extractPages(pdfBytes, [pageNum - 1]);
-    results.push({ name: `pagina_${pageNum}.pdf`, bytes });
+  const srcDoc = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
+  const padCount = Math.max(2, String(pageNumbers.length).length);
+
+  for (let i = 0; i < pageNumbers.length; i++) {
+    const pageNum = pageNumbers[i];
+    const newDoc = await PDFDocument.create();
+    const copiedPages = await newDoc.copyPages(srcDoc, [pageNum - 1]);
+    copiedPages.forEach((p) => newDoc.addPage(p));
+    const bytes = await newDoc.save();
+
+    const formattedNum = String(pageNum).padStart(padCount, '0');
+    results.push({ name: `pagina_${formattedNum}.pdf`, bytes });
+
+    if (onProgress) {
+      onProgress(i + 1, pageNumbers.length);
+    }
   }
   return results;
 }

@@ -18,6 +18,13 @@ import {
   ChevronRight,
   Split,
   RefreshCw,
+  Zap,
+  Eye,
+  FileText,
+  Sliders,
+  CheckSquare,
+  Square,
+  AlertTriangle,
 } from 'lucide-react';
 import { DocumentInfo } from '../types';
 import { loadUserPdfDocument } from '../lib/pdfRenderer';
@@ -49,10 +56,17 @@ export default function SplitRangesTool({ onBack }: SplitRangesToolProps) {
   // Tabs principales: 'ranges' (Rango) o 'pages' (Páginas)
   const [activeTab, setActiveTab] = useState<MainTab>('ranges');
 
+  // Optimización de rendimiento / memoria (para PDFs extensos > 100 páginas)
+  const [previewEnabled, setPreviewEnabled] = useState<boolean>(true);
+
   // Opciones de Tab Rango
   const [rangeMode, setRangeMode] = useState<RangeMode>('custom');
   const [customRanges, setCustomRanges] = useState<SplitRange[]>([{ start: 1, end: 1 }]);
-  const [fixedPageCount, setFixedPageCount] = useState<number>(1);
+  
+  // Modo Rango Fijo / Por Lotes
+  const [fixedPageCount, setFixedPageCount] = useState<number>(200);
+  const [hasFirstChunkOffset, setHasFirstChunkOffset] = useState<boolean>(false);
+  const [firstChunkSize, setFirstChunkSize] = useState<number>(85);
   const [mergeAllRanges, setMergeAllRanges] = useState<boolean>(false);
 
   // Opciones de Tab Páginas
@@ -62,6 +76,7 @@ export default function SplitRangesTool({ onBack }: SplitRangesToolProps) {
 
   // Estado de procesamiento / exportación
   const [isProcessing, setIsProcessing] = useState(false);
+  const [splitProgress, setSplitProgress] = useState<{ current: number; total: number } | null>(null);
   const [processResult, setProcessResult] = useState<{
     type: 'zip' | 'pdf';
     fileName: string;
@@ -70,12 +85,7 @@ export default function SplitRangesTool({ onBack }: SplitRangesToolProps) {
     count: number;
   } | null>(null);
 
-  // Hook de miniaturas progresivas
-  const { thumbnails, isLoading: thumbsLoading } = usePdfThumbnails(
-    docInfo?.pdfBytes ?? null,
-    docInfo?.totalPages ?? 0,
-    0.28
-  );
+  const isLargeDocument = (docInfo?.totalPages ?? 0) > 100;
 
   const handleUpload = async (file: File) => {
     try {
@@ -84,15 +94,24 @@ export default function SplitRangesTool({ onBack }: SplitRangesToolProps) {
       const doc = await loadUserPdfDocument(file);
       setDocInfo(doc);
 
+      const isLarge = doc.totalPages > 100;
+      // Para más de 100 páginas desactivamos la vista previa por defecto para cuidar la RAM
+      setPreviewEnabled(!isLarge);
+
       // Valores por defecto
       setCustomRanges([{ start: 1, end: doc.totalPages }]);
-      setFixedPageCount(Math.min(2, doc.totalPages));
-      // Seleccionar todas por defecto en modo páginas
+      setFixedPageCount(isLarge ? Math.min(200, doc.totalPages) : Math.min(2, doc.totalPages));
+      setFirstChunkSize(Math.min(85, doc.totalPages));
+      setHasFirstChunkOffset(false);
+
+      // Selección en modo páginas: si es enorme no llenamos 10.000 de golpe en memoria
       const all = new Set<number>();
-      for (let i = 1; i <= doc.totalPages; i++) all.add(i);
+      const initialPageCount = isLarge ? Math.min(100, doc.totalPages) : doc.totalPages;
+      for (let i = 1; i <= initialPageCount; i++) all.add(i);
       setSelectedPages(all);
 
       setProcessResult(null);
+      setSplitProgress(null);
     } catch (err: any) {
       setUploadError(err.message || 'No se pudo leer el archivo PDF.');
     } finally {
@@ -100,24 +119,67 @@ export default function SplitRangesTool({ onBack }: SplitRangesToolProps) {
     }
   };
 
-  // Cálculos dinámicos para rangos fijos
+  // Cálculos dinámicos para rangos fijos (con soporte para primer bloque personalizado)
   const computedFixedRanges = useMemo<SplitRange[]>(() => {
     if (!docInfo) return [];
-    const count = Math.max(1, fixedPageCount);
+    const total = docInfo.totalPages;
+    const standardSize = Math.max(1, fixedPageCount);
     const ranges: SplitRange[] = [];
+
     let curr = 1;
-    while (curr <= docInfo.totalPages) {
-      const end = Math.min(docInfo.totalPages, curr + count - 1);
+
+    // Si tiene primer bloque personalizado (offset / primer cuerpo)
+    if (hasFirstChunkOffset && firstChunkSize > 0) {
+      const firstEnd = Math.min(total, Math.max(1, firstChunkSize));
+      ranges.push({ start: 1, end: firstEnd });
+      curr = firstEnd + 1;
+    }
+
+    // Siguientes bloques estándar
+    while (curr <= total) {
+      const end = Math.min(total, curr + standardSize - 1);
       ranges.push({ start: curr, end });
       curr = end + 1;
     }
+
     return ranges;
-  }, [docInfo, fixedPageCount]);
+  }, [docInfo, fixedPageCount, hasFirstChunkOffset, firstChunkSize]);
 
   // Rangos activos a aplicar
   const activeRanges = rangeMode === 'custom' ? customRanges : computedFixedRanges;
 
-  // Agregar nuevo rango
+  // Páginas objetivo para renderizado selectivo (bajo demanda, sin saturar memoria)
+  const targetPages = useMemo(() => {
+    if (!previewEnabled || !docInfo) return [];
+    const set = new Set<number>();
+
+    if (activeTab === 'ranges') {
+      // Solo tomamos los extremos de los primeros 24 rangos visibles
+      const sample = activeRanges.slice(0, 24);
+      for (const r of sample) {
+        set.add(r.start);
+        set.add(r.end);
+      }
+    } else {
+      // En modo páginas, limitamos a las primeras 120 para no colapsar el DOM
+      const maxPages = Math.min(docInfo.totalPages, 120);
+      for (let i = 1; i <= maxPages; i++) {
+        set.add(i);
+      }
+    }
+
+    return Array.from(set);
+  }, [previewEnabled, docInfo, activeTab, activeRanges]);
+
+  // Hook de miniaturas progresivas optimizado para bajo consumo de RAM
+  const { thumbnailMap, isLoading: thumbsLoading } = usePdfThumbnails(
+    docInfo?.pdfBytes ?? null,
+    docInfo?.totalPages ?? 0,
+    0.28,
+    { enabled: previewEnabled, targetPages }
+  );
+
+  // Agregar nuevo rango personalizado
   const handleAddRange = () => {
     if (!docInfo) return;
     const lastRange = customRanges[customRanges.length - 1];
@@ -129,14 +191,13 @@ export default function SplitRangesTool({ onBack }: SplitRangesToolProps) {
     setCustomRanges((prev) => [...prev, { start: nextStart, end: nextEnd }]);
   };
 
-  // Modificar rango
+  // Modificar rango personalizado
   const handleUpdateRange = (index: number, field: 'start' | 'end', val: number) => {
     if (!docInfo) return;
     const clamped = Math.max(1, Math.min(docInfo.totalPages, val));
     setCustomRanges((prev) => {
       const updated = [...prev];
       const target = { ...updated[index], [field]: clamped };
-      // Asegurar que start <= end
       if (field === 'start' && target.start > target.end) {
         target.end = target.start;
       } else if (field === 'end' && target.end < target.start) {
@@ -147,7 +208,7 @@ export default function SplitRangesTool({ onBack }: SplitRangesToolProps) {
     });
   };
 
-  // Eliminar rango
+  // Eliminar rango personalizado
   const handleRemoveRange = (index: number) => {
     if (customRanges.length <= 1) return;
     setCustomRanges((prev) => prev.filter((_, i) => i !== index));
@@ -184,6 +245,7 @@ export default function SplitRangesTool({ onBack }: SplitRangesToolProps) {
     setIsProcessing(true);
     setUploadError(null);
     setProcessResult(null);
+    setSplitProgress(null);
 
     try {
       const baseName = docInfo.fileName.replace(/\.pdf$/i, '');
@@ -205,8 +267,13 @@ export default function SplitRangesTool({ onBack }: SplitRangesToolProps) {
           });
           downloadBytes(mergedBytes, `${baseName}_rangos_unidos.pdf`);
         } else {
-          // Generar archivos independientes por rango
-          const parts = await splitPdfByRanges(docInfo.pdfBytes, activeRanges);
+          // Generar archivos independientes por rango (con reporte de progreso)
+          const parts = await splitPdfByRanges(
+            docInfo.pdfBytes,
+            activeRanges,
+            (curr, tot) => setSplitProgress({ current: curr, total: tot })
+          );
+
           if (parts.length === 1) {
             setProcessResult({
               type: 'pdf',
@@ -218,11 +285,11 @@ export default function SplitRangesTool({ onBack }: SplitRangesToolProps) {
           } else {
             setProcessResult({
               type: 'zip',
-              fileName: `${baseName}_dividido.zip`,
+              fileName: `${baseName}_dividido_${parts.length}_partes.zip`,
               zipFiles: parts,
               count: parts.length,
             });
-            await downloadFilesAsZip(parts, `${baseName}_dividido.zip`);
+            await downloadFilesAsZip(parts, `${baseName}_dividido_${parts.length}_partes.zip`);
           }
         }
       } else {
@@ -252,7 +319,7 @@ export default function SplitRangesTool({ onBack }: SplitRangesToolProps) {
           });
           downloadBytes(singleBytes, `${baseName}_paginas_extraidas.pdf`);
         } else {
-          // Extraer cada página en un archivo individual
+          // Extraer cada página en un archivo individual (con reporte de progreso)
           if (pagesToExtract.length === 1) {
             const pageNum = pagesToExtract[0];
             const singleBytes = await extractPages(docInfo.pdfBytes, [pageNum - 1]);
@@ -264,7 +331,11 @@ export default function SplitRangesTool({ onBack }: SplitRangesToolProps) {
             });
             downloadBytes(singleBytes, `${baseName}_pagina_${pageNum}.pdf`);
           } else {
-            const parts = await extractPagesAsSeparateFiles(docInfo.pdfBytes, pagesToExtract);
+            const parts = await extractPagesAsSeparateFiles(
+              docInfo.pdfBytes,
+              pagesToExtract,
+              (curr, tot) => setSplitProgress({ current: curr, total: tot })
+            );
             setProcessResult({
               type: 'zip',
               fileName: `${baseName}_paginas_divididas.zip`,
@@ -279,6 +350,7 @@ export default function SplitRangesTool({ onBack }: SplitRangesToolProps) {
       setUploadError(err.message || 'Error al procesar el archivo.');
     } finally {
       setIsProcessing(false);
+      setSplitProgress(null);
     }
   };
 
@@ -318,18 +390,18 @@ export default function SplitRangesTool({ onBack }: SplitRangesToolProps) {
             </div>
             <div className="text-left">
               <h1 className="font-bold text-xl text-slate-900 dark:text-slate-100 tracking-tight">Dividir PDF</h1>
-              <p className="text-xs text-slate-500 dark:text-slate-400">Por rangos o páginas individuales</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400">Por rangos, lotes o páginas individuales</p>
             </div>
           </div>
 
           <p className="text-sm text-slate-600 dark:text-slate-300">
-            Extraé páginas de tu PDF o dividilo en varios archivos con la misma precisión que iLovePDF.
+            Dividí documentos extensos (incluso de más de 10.000 páginas) por lotes fijos, personalizá el primer cuerpo o extraé fojas específicas sin saturar tu equipo.
           </p>
 
           {isLoadingUpload ? (
             <div className="py-12 flex flex-col items-center gap-3">
               <Loader2 className="w-9 h-9 text-[#e5322d] animate-spin" />
-              <p className="text-xs text-slate-600 dark:text-slate-400 font-medium">Procesando páginas del documento...</p>
+              <p className="text-xs text-slate-600 dark:text-slate-400 font-medium">Procesando estructura del documento...</p>
             </div>
           ) : (
             <label
@@ -376,140 +448,350 @@ export default function SplitRangesTool({ onBack }: SplitRangesToolProps) {
       />
 
       {/* Top Header Bar */}
-      <header className="h-14 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center justify-between px-4 sm:px-6 shrink-0 z-20">
-        <div className="flex items-center gap-3">
+      <header className="h-14 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center justify-between px-3 sm:px-6 shrink-0 z-20">
+        <div className="flex items-center gap-2 sm:gap-3">
           <button
             type="button"
             onClick={onBack}
-            className="flex items-center gap-1.5 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:text-[#e5322d] px-2.5 py-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+            className="flex items-center gap-1.5 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:text-[#e5322d] px-2 sm:px-2.5 py-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
           >
             <ArrowLeft className="w-4 h-4" />
             <span className="hidden sm:inline">Panel principal</span>
           </button>
           <div className="h-4 w-px bg-slate-300 dark:bg-slate-700" />
           <div className="flex items-center gap-2">
-            <span className="font-bold text-sm text-slate-900 dark:text-slate-100 truncate max-w-[200px] sm:max-w-md">
+            <span className="font-bold text-xs sm:text-sm text-slate-900 dark:text-slate-100 truncate max-w-[140px] sm:max-w-xs md:max-w-md">
               {docInfo.fileName}
             </span>
-            <span className="text-xs bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 font-medium px-2 py-0.5 rounded-md border border-slate-200 dark:border-slate-700">
-              {docInfo.totalPages} páginas
+            <span className="text-xs bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 font-medium px-2 py-0.5 rounded-md border border-slate-200 dark:border-slate-700 font-mono">
+              {docInfo.totalPages.toLocaleString()} págs
             </span>
           </div>
         </div>
 
-        <label
-          htmlFor="change-pdf-file"
-          className="text-xs font-semibold text-slate-600 dark:text-slate-300 hover:text-[#e5322d] cursor-pointer flex items-center gap-1.5 px-3 py-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-          title="Cambiar documento"
-        >
-          <RefreshCw className="w-3.5 h-3.5" />
-          <span className="hidden sm:inline">Cambiar PDF</span>
-          <input
-            id="change-pdf-file"
-            type="file"
-            accept="application/pdf"
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) handleUpload(f);
-              e.target.value = '';
-            }}
-            className="hidden"
-          />
-        </label>
+        {/* Controles de la barra superior: Botón Vista Previa / Modo Rápido + Cambiar PDF */}
+        <div className="flex items-center gap-2">
+          {/* Botón para activar/desactivar vista previa (ahorro de RAM) */}
+          <button
+            type="button"
+            onClick={() => setPreviewEnabled((prev) => !prev)}
+            className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all cursor-pointer shadow-2xs ${
+              previewEnabled
+                ? 'bg-amber-50 dark:bg-amber-950/30 border-amber-300 dark:border-amber-700 text-amber-900 dark:text-amber-200 hover:bg-amber-100'
+                : 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-300 dark:border-emerald-700 text-emerald-800 dark:text-emerald-200 hover:bg-emerald-100'
+            }`}
+            title={
+              previewEnabled
+                ? 'Desactivar miniaturas para optimizar velocidad y memoria RAM'
+                : 'Activar previsualización visual de miniaturas'
+            }
+          >
+            {previewEnabled ? (
+              <>
+                <Eye className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
+                <span className="hidden sm:inline">Vista previa:</span>
+                <span className="font-bold">ON</span>
+              </>
+            ) : (
+              <>
+                <Zap className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                <span className="hidden sm:inline">Modo Rápido:</span>
+                <span className="font-bold">ON</span>
+              </>
+            )}
+          </button>
+
+          <label
+            htmlFor="change-pdf-file"
+            className="text-xs font-semibold text-slate-600 dark:text-slate-300 hover:text-[#e5322d] cursor-pointer flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors border border-transparent hover:border-slate-200 dark:hover:border-slate-700"
+            title="Cambiar documento"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Cambiar PDF</span>
+            <input
+              id="change-pdf-file"
+              type="file"
+              accept="application/pdf"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) handleUpload(f);
+                e.target.value = '';
+              }}
+              className="hidden"
+            />
+          </label>
+        </div>
       </header>
 
       {/* Main Workspace (Two Columns: Left Viewport, Right Sidebar) */}
       <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
         {/* Left Viewport: Document Preview Area */}
-        <div className="flex-1 overflow-y-auto p-4 sm:p-8 flex flex-col items-center">
+        <div className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 flex flex-col items-center">
+          
+          {/* Banner de Aviso de Documento Grande (>100 páginas) */}
+          {isLargeDocument && (
+            <div className="w-full max-w-4xl mb-4 p-3.5 rounded-xl border flex items-center justify-between gap-3 text-xs bg-emerald-50/80 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-200">
+              <div className="flex items-center gap-2.5">
+                <div className="w-7 h-7 rounded-lg bg-emerald-600 text-white flex items-center justify-center shrink-0">
+                  <Zap className="w-4 h-4" />
+                </div>
+                <div>
+                  <p className="font-bold">
+                    Documento extenso detectado ({docInfo.totalPages.toLocaleString()} páginas)
+                  </p>
+                  <p className="text-[11px] text-emerald-700 dark:text-emerald-300">
+                    {previewEnabled
+                      ? 'La vista previa está activa bajo demanda. Si notás lentitud, podés pulsar Modo Rápido.'
+                      : 'El Modo Rápido está activo para evitar colapsar la memoria RAM. La división se procesa a máxima velocidad.'}
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setPreviewEnabled((prev) => !prev)}
+                className="shrink-0 px-3 py-1.5 rounded-lg font-bold border transition-colors cursor-pointer bg-white dark:bg-slate-900 border-emerald-300 dark:border-emerald-700 text-emerald-800 dark:text-emerald-200 hover:bg-emerald-100 dark:hover:bg-slate-800 text-[11px]"
+              >
+                {previewEnabled ? 'Desactivar vista previa' : 'Activar vista previa'}
+              </button>
+            </div>
+          )}
+
           {activeTab === 'ranges' ? (
             /* ======================================================== */
-            /* MODO RANGOS: Marcos punteados con portadas (como iLovePDF) */
+            /* MODO RANGOS                                              */
             /* ======================================================== */
-            <div className="w-full max-w-4xl space-y-8 py-4">
-              {activeRanges.map((range, idx) => {
-                const rangeSpan = range.end - range.start + 1;
-                const showEllipsis = rangeSpan > 2;
-
-                return (
-                  <div key={idx} className="flex flex-col items-center w-full">
-                    {/* Range Title */}
-                    <span className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2.5">
-                      Rango {idx + 1}
-                    </span>
-
-                    {/* Dotted Box Container */}
-                    <div className="w-full max-w-xl bg-white/60 dark:bg-slate-900/60 border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-2xl p-6 sm:p-8 flex items-center justify-center gap-4 sm:gap-8 shadow-2xs transition-all hover:border-slate-400">
-                      {/* Start Page Thumbnail */}
-                      <div className="flex flex-col items-center">
-                        <div className="w-28 sm:w-36 aspect-[3/4] bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-sm overflow-hidden flex items-center justify-center p-1 relative">
-                          {thumbnails[range.start - 1] ? (
-                            <img
-                              src={thumbnails[range.start - 1]}
-                              alt={`Página ${range.start}`}
-                              className="w-full h-full object-contain pointer-events-none"
-                            />
-                          ) : (
-                            <Loader2 className="w-5 h-5 text-slate-300 animate-spin" />
-                          )}
-                        </div>
-                        <span className="text-xs font-semibold text-slate-700 dark:text-slate-300 mt-2 font-mono">
-                          {range.start}
-                        </span>
+            <div className="w-full max-w-4xl space-y-6 py-2">
+              
+              {/* Si es Modo Fijo y se generan muchos lotes (>6 lotes), mostramos una vista optimizada en tabla/lotes */}
+              {rangeMode === 'fixed' && computedFixedRanges.length > 6 ? (
+                <div className="space-y-4">
+                  {/* Resumen Superior de División por Lotes */}
+                  <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-2xs space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <h3 className="font-bold text-base text-slate-900 dark:text-slate-100 flex items-center gap-2">
+                          <Split className="w-4 h-4 text-[#e5322d]" />
+                          División automática por lotes
+                        </h3>
+                        <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                          {docInfo.totalPages.toLocaleString()} páginas divididas en{' '}
+                          <strong className="text-slate-800 dark:text-slate-200">
+                            {computedFixedRanges.length} archivos PDF
+                          </strong>
+                        </p>
                       </div>
 
-                      {/* Middle Ellipsis (if more than 2 pages in range) */}
-                      {showEllipsis && (
-                        <div className="flex flex-col items-center justify-center px-2">
-                          <span className="text-3xl font-bold tracking-widest text-slate-400 dark:text-slate-500 select-none">
-                            ...
+                      <div className="flex flex-wrap items-center gap-2 text-xs">
+                        {hasFirstChunkOffset && (
+                          <span className="px-2.5 py-1 rounded-lg bg-red-50 dark:bg-red-950/40 text-[#e5322d] border border-red-200 dark:border-red-900 font-semibold">
+                            Parte 1: {firstChunkSize} págs
                           </span>
-                          <span className="text-[11px] font-medium text-slate-400 dark:text-slate-500 mt-1 whitespace-nowrap">
-                            {rangeSpan - 2} {rangeSpan - 2 === 1 ? 'página' : 'páginas'}
+                        )}
+                        <span className="px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-semibold border border-slate-200 dark:border-slate-700">
+                          Bloques regulares: {fixedPageCount} págs
+                        </span>
+                        {computedFixedRanges[computedFixedRanges.length - 1] && (
+                          <span className="px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700">
+                            Última parte:{' '}
+                            {computedFixedRanges[computedFixedRanges.length - 1].end -
+                              computedFixedRanges[computedFixedRanges.length - 1].start +
+                              1}{' '}
+                            págs (remanente)
                           </span>
-                        </div>
-                      )}
-
-                      {/* End Page Thumbnail (if start !== end) */}
-                      {range.end !== range.start && (
-                        <div className="flex flex-col items-center">
-                          <div className="w-28 sm:w-36 aspect-[3/4] bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-sm overflow-hidden flex items-center justify-center p-1 relative">
-                            {thumbnails[range.end - 1] ? (
-                              <img
-                                src={thumbnails[range.end - 1]}
-                                alt={`Página ${range.end}`}
-                                className="w-full h-full object-contain pointer-events-none"
-                              />
-                            ) : (
-                              <Loader2 className="w-5 h-5 text-slate-300 animate-spin" />
-                            )}
-                          </div>
-                          <span className="text-xs font-semibold text-slate-700 dark:text-slate-300 mt-2 font-mono">
-                            {range.end}
-                          </span>
-                        </div>
-                      )}
+                        )}
+                      </div>
                     </div>
                   </div>
-                );
-              })}
 
-              {thumbsLoading && (
+                  {/* Grilla visual compacta y ultra fluida de partes */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {computedFixedRanges.map((range, idx) => {
+                      const rangeCount = range.end - range.start + 1;
+                      const isFirstSpecial = hasFirstChunkOffset && idx === 0;
+                      const isLastRemanent =
+                        idx === computedFixedRanges.length - 1 && rangeCount < fixedPageCount;
+
+                      return (
+                        <div
+                          key={idx}
+                          className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 rounded-xl p-3.5 shadow-2xs flex items-center justify-between gap-3 transition-all"
+                        >
+                          <div className="flex items-center gap-3">
+                            {/* Ícono de archivo o miniatura si está activa */}
+                            <div className="w-12 h-14 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-750 rounded-lg flex flex-col items-center justify-center p-1 shrink-0 relative overflow-hidden">
+                              {previewEnabled && thumbnailMap[range.start] ? (
+                                <img
+                                  src={thumbnailMap[range.start]}
+                                  alt={`Pág ${range.start}`}
+                                  className="w-full h-full object-contain pointer-events-none"
+                                />
+                              ) : (
+                                <>
+                                  <FileText className="w-5 h-5 text-slate-400 dark:text-slate-500" />
+                                  <span className="text-[9px] font-mono font-bold text-slate-500 dark:text-slate-400 mt-0.5">
+                                    {range.start}
+                                  </span>
+                                </>
+                              )}
+                            </div>
+
+                            <div>
+                              <div className="flex items-center gap-1.5">
+                                <span className="font-bold text-xs text-slate-800 dark:text-slate-200">
+                                  Parte {idx + 1}
+                                </span>
+                                {isFirstSpecial && (
+                                  <span className="text-[10px] px-1.5 py-0.2 bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 rounded font-semibold">
+                                    Cuerpo 1
+                                  </span>
+                                )}
+                                {isLastRemanent && (
+                                  <span className="text-[10px] px-1.5 py-0.2 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 rounded font-medium">
+                                    Final
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-xs font-mono text-slate-600 dark:text-slate-400 font-medium">
+                                Págs. {range.start.toLocaleString()} – {range.end.toLocaleString()}
+                              </p>
+                              <p className="text-[11px] text-slate-400 dark:text-slate-500">
+                                {rangeCount} {rangeCount === 1 ? 'página' : 'páginas'}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="text-right">
+                            <span className="text-[11px] font-mono px-2 py-1 rounded bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-semibold border border-slate-200 dark:border-slate-700">
+                              .pdf
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : (
+                /* Vista estándar de Marcos Punteados (para rangos personalizados o lotes pequeños) */
+                <div className="space-y-6">
+                  {activeRanges.map((range, idx) => {
+                    const rangeSpan = range.end - range.start + 1;
+                    const showEllipsis = rangeSpan > 2;
+
+                    return (
+                      <div key={idx} className="flex flex-col items-center w-full">
+                        {/* Range Title */}
+                        <div className="flex items-center gap-2 mb-2">
+                          <span className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wide">
+                            Rango {idx + 1}
+                          </span>
+                          <span className="text-[11px] text-slate-400 font-mono">
+                            ({rangeSpan} {rangeSpan === 1 ? 'página' : 'páginas'})
+                          </span>
+                        </div>
+
+                        {/* Dotted Box Container */}
+                        <div className="w-full max-w-xl bg-white/70 dark:bg-slate-900/70 border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-2xl p-5 sm:p-7 flex items-center justify-center gap-4 sm:gap-8 shadow-2xs transition-all hover:border-slate-400">
+                          {/* Start Page Thumbnail */}
+                          <div className="flex flex-col items-center">
+                            <div className="w-24 sm:w-32 aspect-[3/4] bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-sm overflow-hidden flex items-center justify-center p-1 relative">
+                              {previewEnabled ? (
+                                thumbnailMap[range.start] ? (
+                                  <img
+                                    src={thumbnailMap[range.start]}
+                                    alt={`Página ${range.start}`}
+                                    className="w-full h-full object-contain pointer-events-none"
+                                  />
+                                ) : (
+                                  <Loader2 className="w-4 h-4 text-slate-300 animate-spin" />
+                                )
+                              ) : (
+                                <div className="flex flex-col items-center justify-center gap-1 text-slate-400">
+                                  <FileText className="w-6 h-6 stroke-1" />
+                                  <span className="text-[10px] font-mono">Folio</span>
+                                </div>
+                              )}
+                            </div>
+                            <span className="text-xs font-bold text-slate-800 dark:text-slate-200 mt-2 font-mono">
+                              Pág. {range.start}
+                            </span>
+                          </div>
+
+                          {/* Middle Ellipsis (if more than 2 pages in range) */}
+                          {showEllipsis && (
+                            <div className="flex flex-col items-center justify-center px-2">
+                              <span className="text-2xl sm:text-3xl font-bold tracking-widest text-slate-400 dark:text-slate-500 select-none">
+                                ...
+                              </span>
+                              <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400 mt-1 whitespace-nowrap bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-full">
+                                {rangeSpan - 2} {rangeSpan - 2 === 1 ? 'página' : 'páginas'}
+                              </span>
+                            </div>
+                          )}
+
+                          {/* End Page Thumbnail (if start !== end) */}
+                          {range.end !== range.start && (
+                            <div className="flex flex-col items-center">
+                              <div className="w-24 sm:w-32 aspect-[3/4] bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-sm overflow-hidden flex items-center justify-center p-1 relative">
+                                {previewEnabled ? (
+                                  thumbnailMap[range.end] ? (
+                                    <img
+                                      src={thumbnailMap[range.end]}
+                                      alt={`Página ${range.end}`}
+                                      className="w-full h-full object-contain pointer-events-none"
+                                    />
+                                  ) : (
+                                    <Loader2 className="w-4 h-4 text-slate-300 animate-spin" />
+                                  )
+                                ) : (
+                                  <div className="flex flex-col items-center justify-center gap-1 text-slate-400">
+                                    <FileText className="w-6 h-6 stroke-1" />
+                                    <span className="text-[10px] font-mono">Folio</span>
+                                  </div>
+                                )}
+                              </div>
+                              <span className="text-xs font-bold text-slate-800 dark:text-slate-200 mt-2 font-mono">
+                                Pág. {range.end}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {previewEnabled && thumbsLoading && (
                 <div className="flex items-center justify-center gap-2 text-xs text-slate-500 dark:text-slate-400 py-2">
                   <Loader2 className="w-4 h-4 animate-spin text-[#e5322d]" />
-                  <span>Cargando previsualización de hojas...</span>
+                  <span>Cargando previsualización visual...</span>
                 </div>
               )}
             </div>
           ) : (
             /* ======================================================== */
-            /* MODO PÁGINAS: Cuadrícula completa con tildes verdes (Captura 2) */
+            /* MODO PÁGINAS                                             */
             /* ======================================================== */
-            <div className="w-full max-w-5xl py-4 space-y-4">
+            <div className="w-full max-w-5xl py-2 space-y-4">
+              
+              {/* Aviso si son más de 150 páginas en modo extracción directa */}
+              {isLargeDocument && (
+                <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-xl p-3.5 flex items-start gap-2.5 text-xs text-amber-800 dark:text-amber-300">
+                  <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-bold">Para dividir expedientes de miles de páginas:</p>
+                    <p className="mt-0.5">
+                      Te sugerimos usar la pestaña <strong className="underline cursor-pointer" onClick={() => setActiveTab('ranges')}>Rango &gt; Fijo</strong> para separar en lotes automáticos (ej. de a 200 fojas con o sin carátula de 85) en segundos y sin consumir memoria.
+                    </p>
+                  </div>
+                </div>
+              )}
+
               {pageExtractMode === 'selected' && (
                 <div className="flex items-center justify-between bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-2.5 shadow-2xs">
-                  <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                    {selectedPages.size} de {docInfo.totalPages} páginas seleccionadas
+                  <span className="text-xs font-semibold text-slate-700 dark:text-slate-300 font-mono">
+                    {selectedPages.size.toLocaleString()} de {docInfo.totalPages.toLocaleString()} páginas seleccionadas
                   </span>
                   <div className="flex items-center gap-2">
                     <button
@@ -531,9 +813,12 @@ export default function SplitRangesTool({ onBack }: SplitRangesToolProps) {
                 </div>
               )}
 
-              {/* Grid de páginas */}
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
-                {Array.from({ length: docInfo.totalPages }, (_, i) => i + 1).map((pageNum) => {
+              {/* Grid de páginas (con límite de render para proteger el DOM si el documento es gigante) */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 sm:gap-4">
+                {Array.from(
+                  { length: Math.min(docInfo.totalPages, previewEnabled ? 120 : 60) },
+                  (_, i) => i + 1
+                ).map((pageNum) => {
                   const isSelected =
                     pageExtractMode === 'all' || selectedPages.has(pageNum);
                   const isSelectable = pageExtractMode === 'selected';
@@ -552,7 +837,7 @@ export default function SplitRangesTool({ onBack }: SplitRangesToolProps) {
                           : 'border-slate-200 dark:border-slate-800 opacity-40 hover:opacity-75'
                       }`}
                     >
-                      {/* Checkmark verde en la esquina superior izquierda (estilo iLovePDF) */}
+                      {/* Checkmark verde */}
                       <div className="absolute top-2 left-2 z-10">
                         {isSelected ? (
                           <div className="w-5 h-5 rounded-full bg-[#10b981] flex items-center justify-center text-white shadow-sm ring-2 ring-white dark:ring-slate-800">
@@ -563,16 +848,23 @@ export default function SplitRangesTool({ onBack }: SplitRangesToolProps) {
                         )}
                       </div>
 
-                      {/* Miniatura de la página */}
+                      {/* Miniatura o Folio Liviano */}
                       <div className="w-full aspect-[3/4] bg-slate-50 dark:bg-slate-900 rounded-lg overflow-hidden flex items-center justify-center p-1 border border-slate-100 dark:border-slate-750">
-                        {thumbnails[pageNum - 1] ? (
-                          <img
-                            src={thumbnails[pageNum - 1]}
-                            alt={`Página ${pageNum}`}
-                            className="w-full h-full object-contain pointer-events-none"
-                          />
+                        {previewEnabled ? (
+                          thumbnailMap[pageNum] ? (
+                            <img
+                              src={thumbnailMap[pageNum]}
+                              alt={`Página ${pageNum}`}
+                              className="w-full h-full object-contain pointer-events-none"
+                            />
+                          ) : (
+                            <Loader2 className="w-4 h-4 text-slate-300 animate-spin" />
+                          )
                         ) : (
-                          <Loader2 className="w-4 h-4 text-slate-300 animate-spin" />
+                          <div className="flex flex-col items-center justify-center text-slate-400">
+                            <FileText className="w-6 h-6 stroke-1" />
+                            <span className="text-[10px] font-mono mt-1 font-semibold">Folio {pageNum}</span>
+                          </div>
                         )}
                       </div>
 
@@ -584,19 +876,33 @@ export default function SplitRangesTool({ onBack }: SplitRangesToolProps) {
                   );
                 })}
               </div>
+
+              {/* Si hay más páginas que el límite visual */}
+              {docInfo.totalPages > (previewEnabled ? 120 : 60) && (
+                <div className="text-center py-4 bg-slate-100 dark:bg-slate-900/60 rounded-xl border border-slate-200 dark:border-slate-800 text-xs text-slate-600 dark:text-slate-400">
+                  Mostrando las primeras {previewEnabled ? 120 : 60} de {docInfo.totalPages.toLocaleString()} páginas en la vista previa rápida para garantizar rendimiento fluido. Al pulsar Dividir se procesarán todas las seleccionadas.
+                </div>
+              )}
             </div>
           )}
         </div>
 
         {/* ============================================================ */}
-        {/* Right Sidebar: Control Panel (Fiel réplica a iLovePDF)        */}
+        {/* Right Sidebar: Control Panel                                 */}
         {/* ============================================================ */}
         <aside className="w-full lg:w-96 bg-white dark:bg-slate-900 border-t lg:border-t-0 lg:border-l border-slate-200 dark:border-slate-800 flex flex-col justify-between shrink-0 shadow-lg z-10">
           <div className="p-5 sm:p-6 space-y-6 overflow-y-auto">
             {/* Título de sección */}
-            <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100 tracking-tight">
-              Dividir
-            </h2>
+            <div className="flex items-center justify-between">
+              <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100 tracking-tight">
+                Dividir
+              </h2>
+              {isLargeDocument && (
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 font-bold border border-emerald-300 dark:border-emerald-800">
+                  Modo Lote Activo
+                </span>
+              )}
+            </div>
 
             {/* Selector de pestañas principales (Rango | Páginas) */}
             <div className="grid grid-cols-2 gap-2 border border-slate-200 dark:border-slate-700 p-1 rounded-xl bg-slate-50 dark:bg-slate-800/50">
@@ -667,7 +973,7 @@ export default function SplitRangesTool({ onBack }: SplitRangesToolProps) {
                           : 'border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 bg-slate-50 dark:bg-slate-800'
                       }`}
                     >
-                      Fijo
+                      Fijo / Por Lotes
                     </button>
                   </div>
                 </div>
@@ -710,7 +1016,7 @@ export default function SplitRangesTool({ onBack }: SplitRangesToolProps) {
                               onChange={(e) =>
                                 handleUpdateRange(idx, 'start', parseInt(e.target.value, 10) || 1)
                               }
-                              className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded-lg px-2.5 py-1.5 text-center font-bold text-slate-800 dark:text-slate-200 focus:ring-2 focus:ring-[#e5322d] outline-hidden"
+                              className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded-lg px-2.5 py-1.5 text-center font-bold text-slate-800 dark:text-slate-200 focus:ring-2 focus:ring-[#e5322d] outline-hidden font-mono"
                             />
                           </div>
                           <div>
@@ -725,7 +1031,7 @@ export default function SplitRangesTool({ onBack }: SplitRangesToolProps) {
                               onChange={(e) =>
                                 handleUpdateRange(idx, 'end', parseInt(e.target.value, 10) || 1)
                               }
-                              className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded-lg px-2.5 py-1.5 text-center font-bold text-slate-800 dark:text-slate-200 focus:ring-2 focus:ring-[#e5322d] outline-hidden"
+                              className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded-lg px-2.5 py-1.5 text-center font-bold text-slate-800 dark:text-slate-200 focus:ring-2 focus:ring-[#e5322d] outline-hidden font-mono"
                             />
                           </div>
                         </div>
@@ -743,33 +1049,124 @@ export default function SplitRangesTool({ onBack }: SplitRangesToolProps) {
                   </div>
                 )}
 
-                {/* Submodo Rango: Fijo */}
+                {/* Submodo Rango: Fijo / Por Lotes (Con soporte para primer bloque personalizado) */}
                 {rangeMode === 'fixed' && (
-                  <div className="bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 rounded-xl p-4 space-y-3">
-                    <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 block">
-                      Dividir en bloques de:
-                    </label>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="number"
-                        min={1}
-                        max={docInfo.totalPages}
-                        value={fixedPageCount}
-                        onChange={(e) =>
-                          setFixedPageCount(
-                            Math.max(1, Math.min(docInfo.totalPages, parseInt(e.target.value, 10) || 1))
-                          )
-                        }
-                        className="w-24 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-1.5 text-center font-bold text-slate-800 dark:text-slate-200 focus:ring-2 focus:ring-[#e5322d] outline-hidden"
-                      />
-                      <span className="text-xs text-slate-600 dark:text-slate-400">
-                        {fixedPageCount === 1 ? 'página' : 'páginas'} por archivo
-                      </span>
+                  <div className="bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 rounded-xl p-4 space-y-4">
+                    {/* Tamaño del bloque estándar */}
+                    <div>
+                      <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 block mb-1.5">
+                        Dividir en bloques de:
+                      </label>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="number"
+                          min={1}
+                          max={docInfo.totalPages}
+                          value={fixedPageCount}
+                          onChange={(e) =>
+                            setFixedPageCount(
+                              Math.max(1, Math.min(docInfo.totalPages, parseInt(e.target.value, 10) || 1))
+                            )
+                          }
+                          className="w-28 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-1.5 text-center font-bold text-slate-800 dark:text-slate-200 focus:ring-2 focus:ring-[#e5322d] outline-hidden font-mono"
+                        />
+                        <span className="text-xs text-slate-600 dark:text-slate-400">
+                          páginas por archivo
+                        </span>
+                      </div>
                     </div>
 
-                    <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                      Se generarán <strong className="text-slate-700 dark:text-slate-300">{computedFixedRanges.length}</strong> archivos en total.
-                    </p>
+                    {/* Casilla: Personalizar el primer bloque (Offset / Primer cuerpo) */}
+                    <div className="pt-2 border-t border-slate-200 dark:border-slate-700/80 space-y-2.5">
+                      <label className="flex items-start gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={hasFirstChunkOffset}
+                          onChange={(e) => setHasFirstChunkOffset(e.target.checked)}
+                          className="mt-0.5 rounded border-slate-300 text-[#e5322d] focus:ring-[#e5322d] cursor-pointer"
+                        />
+                        <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                          Personalizar el primer bloque (Cuerpo 1 / Desfase)
+                        </span>
+                      </label>
+
+                      {hasFirstChunkOffset && (
+                        <div className="ml-6 p-3 bg-red-50/50 dark:bg-red-950/20 border border-red-200 dark:border-red-900/50 rounded-xl space-y-2">
+                          <label className="text-[11px] font-semibold text-slate-700 dark:text-slate-300 block">
+                            Primera parte de:
+                          </label>
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="number"
+                              min={1}
+                              max={docInfo.totalPages}
+                              value={firstChunkSize}
+                              onChange={(e) =>
+                                setFirstChunkSize(
+                                  Math.max(1, Math.min(docInfo.totalPages, parseInt(e.target.value, 10) || 1))
+                                )
+                              }
+                              className="w-24 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded-lg px-2.5 py-1 text-center font-bold text-[#e5322d] focus:ring-2 focus:ring-[#e5322d] outline-hidden font-mono text-xs"
+                            />
+                            <span className="text-xs text-slate-600 dark:text-slate-400">
+                              páginas (1 a {Math.min(docInfo.totalPages, firstChunkSize)})
+                            </span>
+                          </div>
+                          <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                            A partir de la página {Math.min(docInfo.totalPages, firstChunkSize) + 1}, las siguientes partes serán de {fixedPageCount} páginas.
+                          </p>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Resumen dinámico en tiempo real de los lotes generados */}
+                    <div className="pt-2 border-t border-slate-200 dark:border-slate-700 text-xs space-y-2">
+                      <div className="flex items-center justify-between font-semibold text-slate-800 dark:text-slate-200">
+                        <span>Resultado previsto:</span>
+                        <span className="text-[#e5322d] font-bold font-mono">
+                          {computedFixedRanges.length} archivos PDF
+                        </span>
+                      </div>
+
+                      {/* Lista de desglose de las partes */}
+                      <div className="max-h-40 overflow-y-auto pr-1 space-y-1.5 text-[11px] font-mono">
+                        {computedFixedRanges.slice(0, 4).map((r, i) => (
+                          <div
+                            key={i}
+                            className="flex items-center justify-between p-1.5 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300"
+                          >
+                            <span className="font-semibold text-slate-800 dark:text-slate-200">
+                              Parte {i + 1}:
+                            </span>
+                            <span>
+                              págs. {r.start} - {r.end} ({r.end - r.start + 1} págs)
+                            </span>
+                          </div>
+                        ))}
+
+                        {computedFixedRanges.length > 5 && (
+                          <div className="text-center py-0.5 text-slate-400 dark:text-slate-500 text-[10px]">
+                            ... ({computedFixedRanges.length - 5} partes intermedias de {fixedPageCount} págs) ...
+                          </div>
+                        )}
+
+                        {computedFixedRanges.length > 4 && (
+                          <div className="flex items-center justify-between p-1.5 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300">
+                            <span className="font-semibold text-slate-800 dark:text-slate-200">
+                              Parte {computedFixedRanges.length}:
+                            </span>
+                            <span>
+                              págs. {computedFixedRanges[computedFixedRanges.length - 1].start} -{' '}
+                              {computedFixedRanges[computedFixedRanges.length - 1].end} (
+                              {computedFixedRanges[computedFixedRanges.length - 1].end -
+                                computedFixedRanges[computedFixedRanges.length - 1].start +
+                                1}{' '}
+                              págs)
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
                   </div>
                 )}
 
@@ -782,7 +1179,7 @@ export default function SplitRangesTool({ onBack }: SplitRangesToolProps) {
                     className="mt-0.5 rounded border-slate-300 text-[#e5322d] focus:ring-[#e5322d] cursor-pointer"
                   />
                   <span className="text-xs font-medium text-slate-700 dark:text-slate-300">
-                    Unir todos los rangos en un único PDF.
+                    Unir todos los rangos generados en un único PDF.
                   </span>
                 </label>
               </div>
@@ -821,21 +1218,21 @@ export default function SplitRangesTool({ onBack }: SplitRangesToolProps) {
                   </div>
                 </div>
 
-                {/* Banner de información azul (estilo iLovePDF) */}
+                {/* Banner de información */}
                 <div className="bg-sky-50 dark:bg-sky-950/30 border border-sky-200 dark:border-sky-800/60 rounded-xl p-3.5 flex items-start gap-2.5 text-xs text-sky-800 dark:text-sky-300">
                   <Info className="w-4 h-4 text-sky-600 shrink-0 mt-0.5" />
                   <p>
                     {pageExtractMode === 'all' ? (
                       mergeExtractedPages ? (
-                        <>Las <strong>{docInfo.totalPages}</strong> páginas se unirán en <strong>1 único archivo PDF</strong>.</>
+                        <>Las <strong>{docInfo.totalPages.toLocaleString()}</strong> páginas se unirán en <strong>1 único archivo PDF</strong>.</>
                       ) : (
-                        <>Las páginas seleccionadas se convertirán en diferentes archivos PDF. <strong>{docInfo.totalPages} PDF</strong> serán creados.</>
+                        <>Las páginas se convertirán en diferentes archivos PDF individuales. <strong>{docInfo.totalPages.toLocaleString()} archivos</strong> serán creados dentro de un .ZIP.</>
                       )
                     ) : (
                       mergeExtractedPages ? (
-                        <>Las <strong>{selectedPages.size}</strong> páginas seleccionadas se unirán en <strong>1 único archivo PDF</strong>.</>
+                        <>Las <strong>{selectedPages.size.toLocaleString()}</strong> páginas seleccionadas se unirán en <strong>1 único archivo PDF</strong>.</>
                       ) : (
-                        <>Las páginas seleccionadas se convertirán en diferentes archivos PDF. <strong>{selectedPages.size} PDF</strong> serán creados.</>
+                        <>Las páginas seleccionadas se convertirán en diferentes archivos PDF individuales. <strong>{selectedPages.size.toLocaleString()} archivos</strong> serán creados dentro de un .ZIP.</>
                       )
                     )}
                   </p>
@@ -864,14 +1261,14 @@ export default function SplitRangesTool({ onBack }: SplitRangesToolProps) {
             )}
           </div>
 
-          {/* Footer del Sidebar con botón característico iLovePDF */}
+          {/* Footer del Sidebar con botón de ejecución */}
           <div className="p-5 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-3">
             {processResult ? (
               <div className="space-y-2.5">
                 <div className="flex items-center gap-2 text-emerald-700 dark:text-emerald-400 text-xs font-bold">
-                  <CheckCircle2 className="w-4 h-4" />
+                  <CheckCircle2 className="w-4 h-4 shrink-0" />
                   <span>
-                    ¡PDF dividido con éxito! ({processResult.count}{' '}
+                    ¡PDF dividido con éxito! ({processResult.count.toLocaleString()}{' '}
                     {processResult.count === 1 ? 'archivo' : 'archivos'})
                   </span>
                 </div>
@@ -897,7 +1294,13 @@ export default function SplitRangesTool({ onBack }: SplitRangesToolProps) {
                 {isProcessing ? (
                   <>
                     <Loader2 className="w-5 h-5 animate-spin" />
-                    <span>Dividiendo PDF...</span>
+                    <span>
+                      {splitProgress
+                        ? `Dividiendo parte ${splitProgress.current} de ${splitProgress.total} (${Math.round(
+                            (splitProgress.current / splitProgress.total) * 100
+                          )}%)...`
+                        : 'Dividiendo PDF...'}
+                    </span>
                   </>
                 ) : (
                   <>
