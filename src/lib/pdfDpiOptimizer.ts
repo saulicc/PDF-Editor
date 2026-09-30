@@ -265,6 +265,13 @@ export async function optimizePdfFileToDpi(
     // Inicializamos PDF.js para renderizar a 200 DPI exactos
     pdfJsDoc = await pdfjsLib.getDocument(getPdfJsDocOptions(originalBytes)).promise;
 
+    // Creamos un ÚNICO canvas reciclable fuera del bucle para no saturar memoria RAM
+    const sharedCanvas = document.createElement('canvas');
+    const sharedCtx = sharedCanvas.getContext('2d', { willReadFrequently: false });
+    if (!sharedCtx) {
+      throw new Error('No se pudo inicializar el contexto 2D para renderizado.');
+    }
+
     for (let i = 0; i < totalPages; i++) {
       if (onProgress) {
         onProgress(i + 1, totalPages);
@@ -292,20 +299,18 @@ export async function optimizePdfFileToDpi(
         // Obtenemos viewport sin rotación para pintar el bitmap derecho en el canvas
         const viewport = page.getViewport({ scale, rotation: 0 });
 
-        const canvas = document.createElement('canvas');
-        canvas.width = Math.max(1, Math.round(viewport.width));
-        canvas.height = Math.max(1, Math.round(viewport.height));
+        const targetW = Math.max(1, Math.round(viewport.width));
+        const targetH = Math.max(1, Math.round(viewport.height));
 
-        const ctx = canvas.getContext('2d', { willReadFrequently: false });
-        if (!ctx) {
-          throw new Error('No se pudo inicializar el contexto 2D para renderizado.');
-        }
+        // Reutilizamos el lienzo compartido ajustando sus dimensiones
+        if (sharedCanvas.width !== targetW) sharedCanvas.width = targetW;
+        if (sharedCanvas.height !== targetH) sharedCanvas.height = targetH;
 
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        sharedCtx.fillStyle = '#ffffff';
+        sharedCtx.fillRect(0, 0, targetW, targetH);
 
         const renderTask = (page as any).render({
-          canvasContext: ctx,
+          canvasContext: sharedCtx,
           viewport,
           background: '#ffffff',
         });
@@ -313,12 +318,18 @@ export async function optimizePdfFileToDpi(
 
         // Comprimir a JPEG optimizado
         const jpegBlob = await new Promise<Blob | null>((resolve) => {
-          canvas.toBlob((blob) => resolve(blob), 'image/jpeg', jpegQuality);
+          sharedCanvas.toBlob((blob) => resolve(blob), 'image/jpeg', jpegQuality);
         });
 
-        // Liberar memoria del canvas inmediatamente para evitar saturación de RAM
-        canvas.width = 1;
-        canvas.height = 1;
+        // 1. Limpieza inmediata del canvas para no retener mapas de bits en GPU/RAM
+        sharedCtx.clearRect(0, 0, targetW, targetH);
+        sharedCanvas.width = 1;
+        sharedCanvas.height = 1;
+
+        // 2. Destrucción forzada de la caché de PDF.js para esta página específica
+        try {
+          (page as any).cleanup?.();
+        } catch (_) {}
 
         if (!jpegBlob) {
           throw new Error('No se pudo generar la imagen comprimida de la página.');
@@ -342,9 +353,13 @@ export async function optimizePdfFileToDpi(
         }
       }
 
-      // Devolvemos el control brevemente al hilo principal para no congelar la UI del navegador
-      await new Promise((resolve) => setTimeout(resolve, 5));
+      // 3. Pausa de respiro (35ms) para permitir al Garbage Collector (V8) liberar la RAM antes de la siguiente foja
+      await new Promise((resolve) => setTimeout(resolve, 35));
     }
+
+    // Descartamos definitivamente el canvas compartido
+    sharedCanvas.width = 0;
+    sharedCanvas.height = 0;
 
     const finalBytes = await newDoc.save();
 
