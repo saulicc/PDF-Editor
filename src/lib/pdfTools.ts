@@ -11,13 +11,21 @@ import { PDFDocument } from 'pdf-lib';
 
 /**
  * Une varios archivos PDF, en el orden recibido, en un único documento.
+ * Soporta callback de progreso para informar archivo actual y porcentaje.
  */
-export async function mergePdfFiles(files: File[]): Promise<Uint8Array> {
+export async function mergePdfFiles(
+  files: File[],
+  onProgress?: (current: number, total: number, fileName: string) => void
+): Promise<Uint8Array> {
   const mergedPdf = await PDFDocument.create();
 
-  for (const file of files) {
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    if (onProgress) {
+      onProgress(i + 1, files.length, file.name);
+    }
     const bytes = new Uint8Array(await file.arrayBuffer());
-    const srcDoc = await PDFDocument.load(bytes);
+    const srcDoc = await PDFDocument.load(bytes, { ignoreEncryption: true });
     const copiedPages = await mergedPdf.copyPages(srcDoc, srcDoc.getPageIndices());
     copiedPages.forEach((p) => mergedPdf.addPage(p));
   }
