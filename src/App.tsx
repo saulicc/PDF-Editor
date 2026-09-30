@@ -10,10 +10,11 @@ import MergeTool from './components/MergeTool';
 import RemovePagesTool from './components/RemovePagesTool';
 import SplitRangesTool from './components/SplitRangesTool';
 import ReorderPagesTool from './components/ReorderPagesTool';
+import DpiCompressTool from './components/DpiCompressTool';
 import { useTheme } from './lib/useTheme';
 import { GlobalPdfDropOverlay } from './components/GlobalPdfDropOverlay';
 
-export type AppView = 'dashboard' | 'stamp' | 'merge' | 'remove' | 'split' | 'reorder';
+export type AppView = 'dashboard' | 'stamp' | 'merge' | 'remove' | 'split' | 'reorder' | 'dpi';
 
 export default function App() {
   const [view, setView] = useState<AppView>('dashboard');
@@ -35,6 +36,7 @@ export default function App() {
   if (view === 'remove') return <RemovePagesTool onBack={goToDashboard} />;
   if (view === 'split') return <SplitRangesTool onBack={goToDashboard} />;
   if (view === 'reorder') return <ReorderPagesTool onBack={goToDashboard} />;
+  if (view === 'dpi') return <DpiCompressTool onBack={goToDashboard} />;
 
   return (
     <>

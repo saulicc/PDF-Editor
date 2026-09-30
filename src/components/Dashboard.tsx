@@ -4,7 +4,7 @@
  */
 
 import React from 'react';
-import { Stamp, Combine, ListX, Scissors, ArrowUpDown, Sun, Moon, Monitor } from 'lucide-react';
+import { Stamp, Combine, ListX, Scissors, ArrowUpDown, Sun, Moon, Monitor, Gauge } from 'lucide-react';
 import type { ThemeMode } from '../lib/useTheme';
 import type { AppView } from '../App';
 
@@ -61,6 +61,13 @@ const TOOLS: {
     description: 'Reacomodá el orden de las hojas de un PDF arrastrando miniaturas.',
     Icon: ArrowUpDown,
     color: 'bg-violet-600',
+  },
+  {
+    view: 'dpi',
+    title: 'Normalizar a 200 DPI',
+    description: 'Detecta escaneos de 1200 DPI, los baja a 200 DPI y conserva intactos los livianos con nombre original.',
+    Icon: Gauge,
+    color: 'bg-teal-600',
   },
 ];
 
