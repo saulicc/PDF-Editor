@@ -21,6 +21,7 @@ import {
   FolderOpen,
   Eraser,
   Stamp,
+  Wand2,
 } from 'lucide-react';
 
 interface StampCanvasProps {
@@ -36,6 +37,8 @@ interface StampCanvasProps {
   isStampActive?: boolean;
   onRemoveStampFromAllPages?: () => void;
   onRestoreStamp?: () => void;
+  detectedVectorPages?: number[];
+  onOpenRemoveModal?: () => void;
 }
 
 export const StampCanvas: React.FC<StampCanvasProps> = ({
@@ -51,6 +54,8 @@ export const StampCanvas: React.FC<StampCanvasProps> = ({
   isStampActive = true,
   onRemoveStampFromAllPages,
   onRestoreStamp,
+  detectedVectorPages = [],
+  onOpenRemoveModal,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -493,6 +498,21 @@ export const StampCanvas: React.FC<StampCanvasProps> = ({
               </button>
             )
           )}
+
+          {/* Quick button to open vector removal if previously stamped vector is detected */}
+          {detectedVectorPages && detectedVectorPages.length > 0 && onOpenRemoveModal && (
+            <button
+              type="button"
+              id="canvas-detected-vector-btn"
+              onClick={onOpenRemoveModal}
+              className="flex items-center gap-1.5 bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/40 dark:hover:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 text-xs font-semibold px-2.5 py-1.5 rounded-lg cursor-pointer transition-colors shadow-2xs shrink-0"
+              title="Detectar y quitar vector previo del PDF (Sin parches blancos)"
+            >
+              <Wand2 className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+              <span className="hidden sm:inline">Quitar vector ({detectedVectorPages.length})</span>
+              <span className="sm:hidden">Vector ({detectedVectorPages.length})</span>
+            </button>
+          )}
         </div>
 
         {/* Right: Zoom & Viewport controls */}
@@ -532,6 +552,28 @@ export const StampCanvas: React.FC<StampCanvasProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Banner if previous vector stamp/folio is detected in the PDF */}
+      {detectedVectorPages && detectedVectorPages.length > 0 && onOpenRemoveModal && (
+        <div
+          id="vector-detected-canvas-banner"
+          className="bg-indigo-600 text-white px-4 py-2 text-xs flex flex-wrap items-center justify-between gap-2 shadow-xs shrink-0 border-b border-indigo-700 animate-fadeIn"
+        >
+          <div className="flex items-center gap-2">
+            <Wand2 className="w-4 h-4 text-indigo-200 shrink-0" />
+            <span>
+              <strong>Vector previo detectado:</strong> Este PDF ya tiene sello/folio vectorial en <strong>{detectedVectorPages.length} {detectedVectorPages.length === 1 ? 'página' : 'páginas'}</strong>.
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={onOpenRemoveModal}
+            className="px-3 py-1 bg-white text-indigo-900 hover:bg-indigo-50 font-bold rounded-md text-xs shadow-xs transition-colors cursor-pointer shrink-0"
+          >
+            Quitar vector anterior ahora
+          </button>
+        </div>
+      )}
 
       {/* Main Document Workspace Area */}
       <div className="flex-1 overflow-auto p-6 sm:p-10 flex items-start justify-center relative">

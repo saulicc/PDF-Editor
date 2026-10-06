@@ -31,6 +31,7 @@ import {
   Monitor,
   ArrowLeft,
   Eraser,
+  Wand2,
 } from 'lucide-react';
 import type { ThemeMode } from '../lib/useTheme';
 
@@ -65,6 +66,7 @@ interface SidebarControlsProps {
   onOpenRemoveModal?: () => void;
   hasOriginalDoc?: boolean;
   onDownloadOriginalClean?: () => void;
+  detectedVectorPages?: number[];
 }
 
 const THEME_OPTIONS: { mode: ThemeMode; label: string; Icon: typeof Sun }[] = [
@@ -98,6 +100,7 @@ export const SidebarControls: React.FC<SidebarControlsProps> = ({
   onOpenRemoveModal,
   hasOriginalDoc = true,
   onDownloadOriginalClean,
+  detectedVectorPages = [],
 }) => {
   const [activeTab, setActiveTab] = useState<'stamp' | 'folio' | 'document'>('stamp');
   const [svgUploadError, setSvgUploadError] = useState<string | null>(null);
@@ -461,7 +464,7 @@ export const SidebarControls: React.FC<SidebarControlsProps> = ({
               <button
                 type="button"
                 id="sidebar-stamp-status-toggle-btn"
-                onClick={isStampActive ? (onOpenRemoveModal || onRemoveFromAllPages) : onRestoreStamp}
+                onClick={isStampActive ? onRemoveFromAllPages : onRestoreStamp}
                 className={`px-2.5 py-1 rounded-lg text-xs font-semibold shrink-0 transition-colors cursor-pointer flex items-center gap-1 ${
                   isStampActive
                     ? 'bg-rose-100 hover:bg-rose-200 dark:bg-rose-900/50 dark:hover:bg-rose-900 text-rose-700 dark:text-rose-300'
@@ -928,6 +931,29 @@ export const SidebarControls: React.FC<SidebarControlsProps> = ({
           </div>
         )}
 
+        {/* Vector stamp detection alert & quick action */}
+        {detectedVectorPages && detectedVectorPages.length > 0 && (
+          <button
+            type="button"
+            id="sidebar-detected-vector-btn"
+            onClick={onOpenRemoveModal}
+            className="w-full p-2.5 bg-indigo-50 dark:bg-indigo-950/40 hover:bg-indigo-100 hover:dark:bg-indigo-900/50 border border-indigo-200 dark:border-indigo-800 rounded-xl text-left transition-all cursor-pointer shadow-2xs group"
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5 text-xs font-bold text-indigo-900 dark:text-indigo-200">
+                <Wand2 className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                <span>Vector previo detectado</span>
+              </div>
+              <span className="text-[10px] font-bold bg-indigo-200 dark:bg-indigo-800 text-indigo-900 dark:text-indigo-100 px-1.5 py-0.5 rounded-full">
+                {detectedVectorPages.length} {detectedVectorPages.length === 1 ? 'pág' : 'págs'}
+              </span>
+            </div>
+            <p className="text-[10px] text-indigo-700 dark:text-indigo-300 mt-1 line-clamp-1">
+              Clic para quitar vector sin parches blancos
+            </p>
+          </button>
+        )}
+
         {/* Primary Export Button */}
         <button
           type="button"
@@ -942,16 +968,27 @@ export const SidebarControls: React.FC<SidebarControlsProps> = ({
 
         {/* Quitar de todas las páginas (Hacer lo opuesto) */}
         {isStampActive ? (
-          <button
-            type="button"
-            id="sidebar-remove-stamp-btn"
-            onClick={onOpenRemoveModal || onRemoveFromAllPages}
-            className="w-full py-2.5 px-3 bg-white dark:bg-slate-800 hover:bg-rose-50 hover:dark:bg-rose-950/30 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-900/60 font-semibold rounded-xl text-xs flex items-center justify-center gap-2 transition-all cursor-pointer shadow-2xs"
-            title="Quitar sello y folio de todas las páginas por si te olvidaste de algo"
-          >
-            <Eraser className="w-4 h-4 text-rose-500" />
-            <span>Quitar de todas las páginas (Hacer lo opuesto)</span>
-          </button>
+          <div className="space-y-1">
+            <button
+              type="button"
+              id="sidebar-remove-stamp-btn"
+              onClick={onRemoveFromAllPages}
+              className="w-full py-2.5 px-3 bg-white dark:bg-slate-800 hover:bg-rose-50 hover:dark:bg-rose-950/30 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-900/60 font-semibold rounded-xl text-xs flex items-center justify-center gap-2 transition-all cursor-pointer shadow-2xs"
+              title="Quitar sello y folio de todas las páginas con 1 clic"
+            >
+              <Eraser className="w-4 h-4 text-rose-500" />
+              <span>Quitar de todas las páginas (Hacer lo opuesto)</span>
+            </button>
+            {onOpenRemoveModal && (
+              <button
+                type="button"
+                onClick={onOpenRemoveModal}
+                className="w-full text-center text-[10px] text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 transition-colors py-0.5 cursor-pointer underline"
+              >
+                Opciones avanzadas para quitar...
+              </button>
+            )}
+          </div>
         ) : (
           <button
             type="button"

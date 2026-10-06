@@ -11,10 +11,11 @@ import RemovePagesTool from './components/RemovePagesTool';
 import SplitRangesTool from './components/SplitRangesTool';
 import ReorderPagesTool from './components/ReorderPagesTool';
 import DpiCompressTool from './components/DpiCompressTool';
+import UnstampTool from './components/UnstampTool';
 import { useTheme } from './lib/useTheme';
 import { GlobalPdfDropOverlay } from './components/GlobalPdfDropOverlay';
 
-export type AppView = 'dashboard' | 'stamp' | 'merge' | 'remove' | 'split' | 'reorder' | 'dpi';
+export type AppView = 'dashboard' | 'stamp' | 'merge' | 'remove' | 'split' | 'reorder' | 'dpi' | 'unstamp';
 
 export default function App() {
   const [view, setView] = useState<AppView>('dashboard');
@@ -37,6 +38,17 @@ export default function App() {
   if (view === 'split') return <SplitRangesTool onBack={goToDashboard} />;
   if (view === 'reorder') return <ReorderPagesTool onBack={goToDashboard} />;
   if (view === 'dpi') return <DpiCompressTool onBack={goToDashboard} />;
+  if (view === 'unstamp') {
+    return (
+      <UnstampTool
+        onBack={goToDashboard}
+        onGoToStamp={(file) => {
+          setStampInitialFile(file);
+          setView('stamp');
+        }}
+      />
+    );
+  }
 
   return (
     <>

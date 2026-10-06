@@ -4,7 +4,7 @@
  */
 
 import React from 'react';
-import { Stamp, Combine, ListX, Scissors, ArrowUpDown, Sun, Moon, Monitor, Gauge } from 'lucide-react';
+import { Stamp, Combine, ListX, Scissors, ArrowUpDown, Sun, Moon, Monitor, Gauge, Eraser } from 'lucide-react';
 import type { ThemeMode } from '../lib/useTheme';
 import type { AppView } from '../App';
 
@@ -33,6 +33,13 @@ const TOOLS: {
     description: 'Estampá el sello oficial y numerá las fojas de un expediente en PDF.',
     Icon: Stamp,
     color: 'bg-blue-600',
+  },
+  {
+    view: 'unstamp',
+    title: 'Desfoliar / Quitar Foliado',
+    description: '¿Te equivocaste de hojas al foliar o dividir? Eliminá el sello y folio de páginas puntuales o de todo el archivo.',
+    Icon: Eraser,
+    color: 'bg-rose-600',
   },
   {
     view: 'merge',

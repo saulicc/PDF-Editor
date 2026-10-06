@@ -12,6 +12,7 @@ import {
 import { PRESET_STAMPS, parseAndCleanSvg } from '../lib/svgStamps';
 import { generateSampleDocument, loadUserPdfDocument } from '../lib/pdfRenderer';
 import { stampAndExportPdf, getPagesToStamp, getPageStampCoordinates, eraseStampAreaFromPdf } from '../lib/pdfExporter';
+import { detectVectorStampsInPdf, removeVectorStampsFromPdf } from '../lib/vectorStampCleaner';
 import { SidebarControls } from './SidebarControls';
 import { StampCanvas } from './StampCanvas';
 import { ExportModal } from './ExportModal';
@@ -99,6 +100,8 @@ export default function StampTool({ onBack, initialFile }: StampToolProps) {
   const [isStampActive, setIsStampActive] = useState<boolean>(true);
   const [isRemoveModalOpen, setIsRemoveModalOpen] = useState<boolean>(false);
   const [isProcessingErase, setIsProcessingErase] = useState<boolean>(false);
+  const [detectedVectorPages, setDetectedVectorPages] = useState<number[]>([]);
+  const [isProcessingVectorRemoval, setIsProcessingVectorRemoval] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   useEffect(() => {
@@ -119,6 +122,22 @@ export default function StampTool({ onBack, initialFile }: StampToolProps) {
       setOriginalDocInfo(doc); // Store pristine original document
       setIsStampActive(true);
       setCurrentPageIndex(0);
+
+      // Escanear si el PDF contiene sellos vectoriales previos inyectados
+      try {
+        const vectorScan = await detectVectorStampsInPdf(doc.pdfBytes);
+        setDetectedVectorPages(vectorScan.detectedPages);
+        if (vectorScan.detectedPages.length > 0) {
+          setToastMessage(
+            `💡 Se detectó vector de sello/folio en ${vectorScan.detectedPages.length} ${
+              vectorScan.detectedPages.length === 1 ? 'página' : 'páginas'
+            }. Podés quitarlo con 1 clic sin tapar el fondo.`
+          );
+          setTimeout(() => setToastMessage(null), 6000);
+        }
+      } catch (scanErr) {
+        console.warn('Vector scan error:', scanErr);
+      }
 
       // Si se especifica un número inicial nuevo (ej: al continuar foliación desde ExportModal)
       if (options?.newStartNumber !== undefined) {
@@ -186,13 +205,33 @@ export default function StampTool({ onBack, initialFile }: StampToolProps) {
     }
   };
 
-  const handleRemoveStampFromAllPages = () => {
+  const handleRemoveStampFromAllPages = async () => {
     setIsStampActive(false);
-    if (originalDocInfo) {
-      setDocInfo(originalDocInfo);
+    if (!docInfo) return;
+
+    try {
+      setToastMessage('Quitando sello y foliador de todas las páginas...');
+      // 1. Quitar quirúrgicamente cualquier vector de sello o folio incrustado en el PDF
+      const result = await removeVectorStampsFromPdf(docInfo.pdfBytes);
+      if (result.cleanPdfBytes) {
+        const cleanFile = new File([result.cleanPdfBytes.buffer as ArrayBuffer], docInfo.fileName, { type: 'application/pdf' });
+        const updatedDoc = await loadUserPdfDocument(cleanFile);
+        setDocInfo(updatedDoc);
+        setOriginalDocInfo(updatedDoc);
+      } else if (originalDocInfo) {
+        setDocInfo(originalDocInfo);
+      }
+      setDetectedVectorPages([]);
+      setIsStampActive(false);
+      setToastMessage('¡Sello y folio quitados de todas las páginas! El documento está limpio.');
+      setTimeout(() => setToastMessage(null), 4500);
+    } catch (err) {
+      console.warn('Error during complete stamp removal:', err);
+      setIsStampActive(false);
+      if (originalDocInfo) setDocInfo(originalDocInfo);
+      setToastMessage('Sello desactivado de las páginas.');
+      setTimeout(() => setToastMessage(null), 4000);
     }
-    setToastMessage('Se quitó el sello y el folio de todas las páginas (documento limpio).');
-    setTimeout(() => setToastMessage(null), 4500);
   };
 
   const handleRestoreStamp = () => {
@@ -218,25 +257,73 @@ export default function StampTool({ onBack, initialFile }: StampToolProps) {
     setTimeout(() => setToastMessage(null), 3000);
   };
 
+  const handleRemoveVectorStamps = async (pageNumbers?: number[]) => {
+    if (!docInfo) return;
+    try {
+      setIsProcessingVectorRemoval(true);
+      setToastMessage('Analizando y removiendo quirúrgicamente el vector del PDF...');
+      const targetList = pageNumbers && pageNumbers.length > 0 ? pageNumbers : undefined;
+      const result = await removeVectorStampsFromPdf(
+        docInfo.pdfBytes,
+        targetList,
+        (p) => setToastMessage(p.status)
+      );
+
+      // Cargar documento limpio en pdfjs-dist para refrescar previsualizaciones y canvas
+      const cleanFile = new File([result.cleanPdfBytes.buffer as ArrayBuffer], docInfo.fileName, { type: 'application/pdf' });
+      const updatedDoc = await loadUserPdfDocument(cleanFile);
+      setDocInfo(updatedDoc);
+      setOriginalDocInfo(updatedDoc);
+      setDetectedVectorPages([]);
+      setIsStampActive(false); // CRITICAL: false para que el visor quede 100% limpio
+      setToastMessage(
+        result.totalCleaned > 0
+          ? `¡Vector de sello y foliador eliminado con éxito de ${result.totalCleaned} ${
+              result.totalCleaned === 1 ? 'página' : 'páginas'
+            }! Todo el texto original, firmas y membretes quedaron intactos.`
+          : '¡Sello y folio desactivados! El documento está limpio.'
+      );
+      setTimeout(() => setToastMessage(null), 5000);
+    } catch (err: any) {
+      console.error('Error removing vector stamp:', err);
+      setIsStampActive(false);
+      alert('Error al remover vector del PDF: ' + (err?.message || 'Error desconocido'));
+    } finally {
+      setIsProcessingVectorRemoval(false);
+    }
+  };
+
   const handleEraseEmbeddedStamps = async (rangeTypeToClean: PageRangeType, customRangeStrToClean: string) => {
     if (!docInfo) return;
     try {
       setIsProcessingErase(true);
-      const cleanedBytes = await eraseStampAreaFromPdf(
-        docInfo.pdfBytes,
-        stampGroup,
-        rangeTypeToClean,
-        customRangeStrToClean,
-        currentPageIndex
-      );
-      const cleanedDoc: DocumentInfo = {
-        ...docInfo,
-        pdfBytes: cleanedBytes,
-        fileName: docInfo.fileName.replace(/\.pdf$/i, '') + '_limpio.pdf',
-      };
-      setDocInfo(cleanedDoc);
+      const targetPages = getPagesToStamp(rangeTypeToClean, customRangeStrToClean, docInfo.totalPages, currentPageIndex + 1);
+
+      // 1. Intentar primero la extracción vectorial quirúrgica (sin tapar texto ni fondo)
+      const vectorRes = await removeVectorStampsFromPdf(docInfo.pdfBytes, targetPages);
+      let cleanedBytes: Uint8Array;
+
+      if (vectorRes.success) {
+        cleanedBytes = vectorRes.cleanPdfBytes;
+        setToastMessage(`Se extrajo quirúrgicamente el vector del sello y folio en ${vectorRes.totalCleaned} páginas sin tapar ningún dato de fondo.`);
+      } else {
+        // 2. Si no había capas vectoriales separadas (ej. escaneo plano), aplicar parche
+        cleanedBytes = await eraseStampAreaFromPdf(
+          docInfo.pdfBytes,
+          stampGroup,
+          rangeTypeToClean,
+          customRangeStrToClean,
+          currentPageIndex
+        );
+        setToastMessage('Se limpiaron las marcas del sello en las páginas elegidas.');
+      }
+
+      const cleanFile = new File([cleanedBytes.buffer as ArrayBuffer], docInfo.fileName, { type: 'application/pdf' });
+      const updatedDoc = await loadUserPdfDocument(cleanFile);
+      setDocInfo(updatedDoc);
+      setOriginalDocInfo(updatedDoc);
+      setDetectedVectorPages([]);
       setIsStampActive(false);
-      setToastMessage('Se limpiaron y blanquearon las marcas del sello en las páginas elegidas.');
       setTimeout(() => setToastMessage(null), 4500);
     } catch (err: any) {
       alert('Error al limpiar marcas: ' + (err?.message || 'Error desconocido'));
@@ -405,6 +492,7 @@ export default function StampTool({ onBack, initialFile }: StampToolProps) {
         onOpenRemoveModal={() => setIsRemoveModalOpen(true)}
         hasOriginalDoc={Boolean(originalDocInfo || docInfo)}
         onDownloadOriginalClean={handleDownloadOriginalClean}
+        detectedVectorPages={detectedVectorPages}
       />
 
       {/* Main Interactive Stage: Canvas with single-unit StampGroup */}
@@ -422,6 +510,8 @@ export default function StampTool({ onBack, initialFile }: StampToolProps) {
           isStampActive={isStampActive}
           onRemoveStampFromAllPages={handleRemoveStampFromAllPages}
           onRestoreStamp={handleRestoreStamp}
+          detectedVectorPages={detectedVectorPages}
+          onOpenRemoveModal={() => setIsRemoveModalOpen(true)}
         />
       </main>
 
@@ -453,9 +543,12 @@ export default function StampTool({ onBack, initialFile }: StampToolProps) {
         stampGroup={stampGroup}
         isStampActive={isStampActive}
         hasOriginalDoc={Boolean(originalDocInfo || docInfo)}
+        detectedVectorPages={detectedVectorPages}
         onClose={() => setIsRemoveModalOpen(false)}
         onRemoveFromAllPages={handleRemoveStampFromAllPages}
         onDownloadOriginalClean={handleDownloadOriginalClean}
+        onRemoveVectorStamps={handleRemoveVectorStamps}
+        isProcessingVectorRemoval={isProcessingVectorRemoval}
         onEraseEmbeddedStamps={handleEraseEmbeddedStamps}
         isProcessingErase={isProcessingErase}
       />

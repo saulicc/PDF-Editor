@@ -7,7 +7,9 @@
  * (pdf-lib para escritura, pdfRenderer.ts + pdfjs-dist para miniaturas).
  */
 
-import { PDFDocument } from 'pdf-lib';
+import { PDFDocument, PDFName, PDFArray, rgb } from 'pdf-lib';
+// @ts-ignore
+import pako from 'pako';
 
 /**
  * Une varios archivos PDF, en el orden recibido, en un único documento.
@@ -204,3 +206,247 @@ export async function downloadFilesAsZip(
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
+
+export interface UnstampAreaConfig {
+  preset: 'top-right' | 'top-left' | 'bottom-right' | 'bottom-left' | 'custom';
+  width: number;
+  height: number;
+  marginRight: number;
+  marginLeft: number;
+  marginTop: number;
+  marginBottom: number;
+  customX?: number;
+  customY?: number;
+}
+
+/**
+ * Removes/erases folios and stamps from specific pages of an existing PDF.
+ * Draws an exact, clean vector white patch over the stamp and folio area.
+ * Keeps all other contents on the page completely intact.
+ */
+export async function removeFoliosFromPdfPages(
+  sourcePdfBytes: Uint8Array,
+  pageNumbersToUnstamp: number[], // 1-based page numbers
+  area: UnstampAreaConfig,
+  onProgress?: (current: number, total: number) => void
+): Promise<Uint8Array> {
+  const pdfDoc = await PDFDocument.load(sourcePdfBytes, { ignoreEncryption: true });
+  const totalPages = pdfDoc.getPageCount();
+
+  const pagesSet = new Set(pageNumbersToUnstamp.filter((p) => p >= 1 && p <= totalPages));
+  const pagesList = Array.from(pagesSet).sort((a, b) => a - b);
+
+  let processed = 0;
+  for (const pageNum of pagesList) {
+    const page = pdfDoc.getPage(pageNum - 1);
+    const { width: pageWidth, height: pageHeight } = page.getSize();
+
+    const w = area.width;
+    const h = area.height;
+
+    let boxX = 0;
+    let boxY = 0;
+
+    if (area.preset === 'top-right') {
+      boxX = pageWidth - w - area.marginRight;
+      boxY = pageHeight - h - area.marginTop;
+    } else if (area.preset === 'top-left') {
+      boxX = area.marginLeft;
+      boxY = pageHeight - h - area.marginTop;
+    } else if (area.preset === 'bottom-right') {
+      boxX = pageWidth - w - area.marginRight;
+      boxY = area.marginBottom;
+    } else if (area.preset === 'bottom-left') {
+      boxX = area.marginLeft;
+      boxY = area.marginBottom;
+    } else {
+      boxX = area.customX ?? (pageWidth - w - 3);
+      boxY = pageHeight - (area.customY ?? 3) - h;
+    }
+
+    // Safety bounds
+    const safeX = Math.max(0, boxX);
+    const safeY = Math.max(0, boxY);
+    const safeW = Math.min(pageWidth - safeX, w);
+    const safeH = Math.min(pageHeight - safeY, h);
+
+    // Clean white vector rectangle over the folio/stamp
+    page.drawRectangle({
+      x: safeX,
+      y: safeY,
+      width: safeW,
+      height: safeH,
+      color: rgb(1, 1, 1),
+      opacity: 1.0,
+    });
+
+    processed++;
+    if (onProgress) {
+      onProgress(processed, pagesList.length);
+    }
+  }
+
+  return pdfDoc.save();
+}
+
+/**
+ * Safely decodes a PDF stream to string, inflating it with pako if compressed.
+ */
+function decodePdfStreamToString(stream: any): { text: string; compressed: boolean } {
+  const raw = stream.contents;
+  if (!raw || raw.length === 0) return { text: '', compressed: false };
+  try {
+    const uncompressed = pako.inflate(raw);
+    let str = '';
+    for (let i = 0; i < uncompressed.length; i++) {
+      str += String.fromCharCode(uncompressed[i]);
+    }
+    return { text: str, compressed: true };
+  } catch (_) {
+    let str = '';
+    for (let i = 0; i < raw.length; i++) {
+      str += String.fromCharCode(raw[i]);
+    }
+    return { text: str, compressed: false };
+  }
+}
+
+/**
+ * Encodes text back into a PDF stream, compressing it if it was previously compressed.
+ */
+function encodeStringToPdfStream(stream: any, text: string, wasCompressed: boolean) {
+  const bytes = new Uint8Array(text.length);
+  for (let i = 0; i < text.length; i++) {
+    bytes[i] = text.charCodeAt(i) & 0xff;
+  }
+  const finalBytes = wasCompressed ? pako.deflate(bytes) : bytes;
+  stream.contents = finalBytes;
+  if (stream.dict) {
+    stream.dict.set(PDFName.of('Length'), stream.dict.context.obj(finalBytes.length));
+  }
+}
+
+/**
+ * Checks whether a stream's content represents the vector stamp and folio layer added by this app.
+ */
+function isVectorStampStreamContent(text: string): boolean {
+  return (
+    text.includes('EmbeddedPdfPage') ||
+    (/(\/XObject|\/Fm|\/Form)[^\n\r]*Do[\s\S]*?(Tj|TJ)/.test(text) &&
+      (text.includes('Folio') || /<[0-9a-fA-F]+>\s*Tj/.test(text)))
+  );
+}
+
+/**
+ * Scans a PDF and detects which pages contain the app's vector stamp and folio layers.
+ */
+export async function detectVectorStampsInPdf(
+  sourcePdfBytes: Uint8Array
+): Promise<{ pagesWithVectors: number[]; totalPages: number }> {
+  try {
+    const pdfDoc = await PDFDocument.load(sourcePdfBytes, { ignoreEncryption: true });
+    const totalPages = pdfDoc.getPageCount();
+    const pagesWithVectors: number[] = [];
+
+    for (let p = 1; p <= totalPages; p++) {
+      const page = pdfDoc.getPage(p - 1);
+      const contentsRef = page.node.get(PDFName.of('Contents'));
+
+      if (contentsRef instanceof PDFArray) {
+        for (let i = 0; i < contentsRef.size(); i++) {
+          const stream = pdfDoc.context.lookup(contentsRef.get(i));
+          if (stream) {
+            const { text } = decodePdfStreamToString(stream);
+            if (isVectorStampStreamContent(text)) {
+              pagesWithVectors.push(p);
+              break;
+            }
+          }
+        }
+      } else if (contentsRef) {
+        const stream = pdfDoc.context.lookup(contentsRef);
+        if (stream) {
+          const { text } = decodePdfStreamToString(stream);
+          if (isVectorStampStreamContent(text)) {
+            pagesWithVectors.push(p);
+          }
+        }
+      }
+    }
+
+    return { pagesWithVectors, totalPages };
+  } catch (e) {
+    console.warn('Could not scan vector stamps in PDF:', e);
+    return { pagesWithVectors: [], totalPages: 0 };
+  }
+}
+
+/**
+ * SURGICALLY REMOVES the vector stamp and folio layers from the specified pages of a PDF.
+ * Unlike whiteout patching, this removes the actual vector drawing operators and Form XObject references
+ * without drawing any covering rectangles, preserving 100% of the underlying text, lines, and background!
+ */
+export async function surgicallyRemoveVectorStampsFromPdfPages(
+  sourcePdfBytes: Uint8Array,
+  pageNumbersToUnstamp: number[], // 1-based page numbers
+  onProgress?: (current: number, total: number) => void
+): Promise<{ bytes: Uint8Array; removedCount: number }> {
+  const pdfDoc = await PDFDocument.load(sourcePdfBytes, { ignoreEncryption: true });
+  const totalPages = pdfDoc.getPageCount();
+
+  const pagesSet = new Set(pageNumbersToUnstamp.filter((p) => p >= 1 && p <= totalPages));
+  const pagesList = Array.from(pagesSet).sort((a, b) => a - b);
+
+  let removedCount = 0;
+  let processed = 0;
+
+  for (const pageNum of pagesList) {
+    const page = pdfDoc.getPage(pageNum - 1);
+    const contentsRef = page.node.get(PDFName.of('Contents'));
+
+    if (contentsRef instanceof PDFArray) {
+      const keptRefs: any[] = [];
+      let pageHadVector = false;
+
+      for (let i = 0; i < contentsRef.size(); i++) {
+        const ref = contentsRef.get(i);
+        const stream = pdfDoc.context.lookup(ref);
+        if (stream) {
+          const { text } = decodePdfStreamToString(stream);
+          if (isVectorStampStreamContent(text)) {
+            pageHadVector = true;
+            // Do not keep this stream, surgically omit it!
+            continue;
+          }
+        }
+        keptRefs.push(ref);
+      }
+
+      if (pageHadVector) {
+        page.node.set(PDFName.of('Contents'), pdfDoc.context.obj(keptRefs));
+        removedCount++;
+      }
+    } else if (contentsRef) {
+      const stream = pdfDoc.context.lookup(contentsRef);
+      if (stream) {
+        const { text, compressed } = decodePdfStreamToString(stream);
+        // Match q ... /EmbeddedPdfPage... Do ... ET Q
+        const regex = /q\s*[\d\.\s\-]+cm\s*(\/EmbeddedPdfPage[^\n\r]*|(\/XObject|\/Fm)[^\n\r]*)Do[\s\S]*?ET\s*Q/g;
+        if (regex.test(text)) {
+          const cleanedText = text.replace(regex, '');
+          encodeStringToPdfStream(stream, cleanedText, compressed);
+          removedCount++;
+        }
+      }
+    }
+
+    processed++;
+    if (onProgress) {
+      onProgress(processed, pagesList.length);
+    }
+  }
+
+  const bytes = await pdfDoc.save();
+  return { bytes, removedCount };
+}
+
