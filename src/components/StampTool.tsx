@@ -11,12 +11,13 @@ import {
 } from '../types';
 import { PRESET_STAMPS, parseAndCleanSvg } from '../lib/svgStamps';
 import { generateSampleDocument, loadUserPdfDocument } from '../lib/pdfRenderer';
-import { stampAndExportPdf, getPagesToStamp, getPageStampCoordinates } from '../lib/pdfExporter';
+import { stampAndExportPdf, getPagesToStamp, getPageStampCoordinates, eraseStampAreaFromPdf } from '../lib/pdfExporter';
 import { SidebarControls } from './SidebarControls';
 import { StampCanvas } from './StampCanvas';
 import { ExportModal } from './ExportModal';
+import { RemoveStampModal } from './RemoveStampModal';
 import { useTheme } from '../lib/useTheme';
-import { Upload, FileText, Stamp, ArrowLeft } from 'lucide-react';
+import { Upload, FileText, Stamp, ArrowLeft, CheckCircle2, Eraser } from 'lucide-react';
 import { GlobalPdfDropOverlay } from './GlobalPdfDropOverlay';
 
 interface StampToolProps {
@@ -93,6 +94,13 @@ export default function StampTool({ onBack, initialFile }: StampToolProps) {
   const [isLoadingUpload, setIsLoadingUpload] = useState<boolean>(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
 
+  // States for "Quitar de todas las páginas" / Revert
+  const [originalDocInfo, setOriginalDocInfo] = useState<DocumentInfo | null>(null);
+  const [isStampActive, setIsStampActive] = useState<boolean>(true);
+  const [isRemoveModalOpen, setIsRemoveModalOpen] = useState<boolean>(false);
+  const [isProcessingErase, setIsProcessingErase] = useState<boolean>(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
   useEffect(() => {
     if (initialFile) {
       handleUploadPdf(initialFile);
@@ -108,6 +116,8 @@ export default function StampTool({ onBack, initialFile }: StampToolProps) {
       setIsLoadingUpload(true);
       const doc = await loadUserPdfDocument(file);
       setDocInfo(doc);
+      setOriginalDocInfo(doc); // Store pristine original document
+      setIsStampActive(true);
       setCurrentPageIndex(0);
 
       // Si se especifica un número inicial nuevo (ej: al continuar foliación desde ExportModal)
@@ -151,6 +161,8 @@ export default function StampTool({ onBack, initialFile }: StampToolProps) {
   const handleGenerateSample = async (pages: number) => {
     const doc = await generateSampleDocument(pages);
     setDocInfo(doc);
+    setOriginalDocInfo(doc); // Store pristine original document
+    setIsStampActive(true);
     setCurrentPageIndex(0);
     // Posición predeterminada: esquina superior derecha, exactamente a 3 pt del borde visible
     const firstPage = doc.pages[0];
@@ -174,8 +186,78 @@ export default function StampTool({ onBack, initialFile }: StampToolProps) {
     }
   };
 
+  const handleRemoveStampFromAllPages = () => {
+    setIsStampActive(false);
+    if (originalDocInfo) {
+      setDocInfo(originalDocInfo);
+    }
+    setToastMessage('Se quitó el sello y el folio de todas las páginas (documento limpio).');
+    setTimeout(() => setToastMessage(null), 4500);
+  };
+
+  const handleRestoreStamp = () => {
+    setIsStampActive(true);
+    setToastMessage('Sello y foliador restablecido en las páginas.');
+    setTimeout(() => setToastMessage(null), 3000);
+  };
+
+  const handleDownloadOriginalClean = () => {
+    const targetDoc = originalDocInfo || docInfo;
+    if (!targetDoc) return;
+    const cleanFileName = targetDoc.fileName.replace(/\.pdf$/i, '') + '_sin_sellos.pdf';
+    const blob = new Blob([targetDoc.pdfBytes.buffer as ArrayBuffer], { type: 'application/pdf' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = cleanFileName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    setToastMessage('Descargando archivo original limpio...');
+    setTimeout(() => setToastMessage(null), 3000);
+  };
+
+  const handleEraseEmbeddedStamps = async (rangeTypeToClean: PageRangeType, customRangeStrToClean: string) => {
+    if (!docInfo) return;
+    try {
+      setIsProcessingErase(true);
+      const cleanedBytes = await eraseStampAreaFromPdf(
+        docInfo.pdfBytes,
+        stampGroup,
+        rangeTypeToClean,
+        customRangeStrToClean,
+        currentPageIndex
+      );
+      const cleanedDoc: DocumentInfo = {
+        ...docInfo,
+        pdfBytes: cleanedBytes,
+        fileName: docInfo.fileName.replace(/\.pdf$/i, '') + '_limpio.pdf',
+      };
+      setDocInfo(cleanedDoc);
+      setIsStampActive(false);
+      setToastMessage('Se limpiaron y blanquearon las marcas del sello en las páginas elegidas.');
+      setTimeout(() => setToastMessage(null), 4500);
+    } catch (err: any) {
+      alert('Error al limpiar marcas: ' + (err?.message || 'Error desconocido'));
+    } finally {
+      setIsProcessingErase(false);
+    }
+  };
+
   const handleExportPdf = async () => {
     if (!docInfo || isExporting) return;
+
+    if (!isStampActive) {
+      const confirmReactivate = window.confirm(
+        'El sello está actualmente quitado de las páginas.\n\n¿Deseás volver a colocar el sello para exportar el documento foliado?\n\n(Aceptar = Colocar sello y exportar / Cancelar = Mantener limpio)'
+      );
+      if (confirmReactivate) {
+        setIsStampActive(true);
+      } else {
+        return;
+      }
+    }
 
     try {
       setIsExporting(true);
@@ -308,6 +390,7 @@ export default function StampTool({ onBack, initialFile }: StampToolProps) {
         exportStatusText={exportStatusText}
         onDocChange={(newDoc) => {
           setDocInfo(newDoc);
+          setOriginalDocInfo(newDoc);
           setCurrentPageIndex(0);
         }}
         onStampGroupChange={setStampGroup}
@@ -316,6 +399,12 @@ export default function StampTool({ onBack, initialFile }: StampToolProps) {
         onGenerateSample={handleGenerateSample}
         onExportPdf={handleExportPdf}
         onUploadPdf={handleUploadPdf}
+        isStampActive={isStampActive}
+        onRemoveFromAllPages={handleRemoveStampFromAllPages}
+        onRestoreStamp={handleRestoreStamp}
+        onOpenRemoveModal={() => setIsRemoveModalOpen(true)}
+        hasOriginalDoc={Boolean(originalDocInfo || docInfo)}
+        onDownloadOriginalClean={handleDownloadOriginalClean}
       />
 
       {/* Main Interactive Stage: Canvas with single-unit StampGroup */}
@@ -330,6 +419,9 @@ export default function StampTool({ onBack, initialFile }: StampToolProps) {
           docFileName={docInfo.fileName}
           onUploadPdf={handleUploadPdf}
           isLoadingUpload={isLoadingUpload}
+          isStampActive={isStampActive}
+          onRemoveStampFromAllPages={handleRemoveStampFromAllPages}
+          onRestoreStamp={handleRestoreStamp}
         />
       </main>
 
@@ -347,7 +439,46 @@ export default function StampTool({ onBack, initialFile }: StampToolProps) {
           const nextStart = continueFolio ? endFolioNumber + 1 : undefined;
           handleUploadPdf(file, { newStartNumber: nextStart });
         }}
+        onRevertAndClean={() => {
+          setIsExportModalOpen(false);
+          handleRemoveStampFromAllPages();
+        }}
       />
+
+      {/* Remove Stamp / Undo Modal (Hacer lo opuesto) */}
+      <RemoveStampModal
+        isOpen={isRemoveModalOpen}
+        fileName={docInfo.fileName}
+        totalPages={docInfo.totalPages}
+        stampGroup={stampGroup}
+        isStampActive={isStampActive}
+        hasOriginalDoc={Boolean(originalDocInfo || docInfo)}
+        onClose={() => setIsRemoveModalOpen(false)}
+        onRemoveFromAllPages={handleRemoveStampFromAllPages}
+        onDownloadOriginalClean={handleDownloadOriginalClean}
+        onEraseEmbeddedStamps={handleEraseEmbeddedStamps}
+        isProcessingErase={isProcessingErase}
+      />
+
+      {/* Notification Toast */}
+      {toastMessage && (
+        <div
+          id="stamp-action-toast"
+          className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-slate-900/95 text-white px-4 py-2.5 rounded-2xl shadow-2xl flex items-center gap-2.5 text-xs border border-slate-700/80 backdrop-blur-md animate-fadeIn select-none"
+        >
+          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+          <span className="font-medium text-slate-200">{toastMessage}</span>
+          {!isStampActive && (
+            <button
+              type="button"
+              onClick={handleRestoreStamp}
+              className="ml-2 font-bold text-blue-400 hover:text-blue-300 underline cursor-pointer"
+            >
+              Restaurar
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

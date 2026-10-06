@@ -30,6 +30,7 @@ import {
   Moon,
   Monitor,
   ArrowLeft,
+  Eraser,
 } from 'lucide-react';
 import type { ThemeMode } from '../lib/useTheme';
 
@@ -58,6 +59,12 @@ interface SidebarControlsProps {
   onGenerateSample: (pages: number) => void;
   onExportPdf: () => void;
   onUploadPdf?: (file: File) => void;
+  isStampActive?: boolean;
+  onRemoveFromAllPages?: () => void;
+  onRestoreStamp?: () => void;
+  onOpenRemoveModal?: () => void;
+  hasOriginalDoc?: boolean;
+  onDownloadOriginalClean?: () => void;
 }
 
 const THEME_OPTIONS: { mode: ThemeMode; label: string; Icon: typeof Sun }[] = [
@@ -85,6 +92,12 @@ export const SidebarControls: React.FC<SidebarControlsProps> = ({
   onGenerateSample,
   onExportPdf,
   onUploadPdf,
+  isStampActive = true,
+  onRemoveFromAllPages,
+  onRestoreStamp,
+  onOpenRemoveModal,
+  hasOriginalDoc = true,
+  onDownloadOriginalClean,
 }) => {
   const [activeTab, setActiveTab] = useState<'stamp' | 'folio' | 'document'>('stamp');
   const [svgUploadError, setSvgUploadError] = useState<string | null>(null);
@@ -428,6 +441,48 @@ export const SidebarControls: React.FC<SidebarControlsProps> = ({
         {/* TAB 1: STAMP SVG & COMPOUND TRANSFORM */}
         {activeTab === 'stamp' && (
           <div className="space-y-4">
+            {/* Stamp State Indicator & Quick Toggle (Hacer lo opuesto) */}
+            <div className={`p-2.5 rounded-xl border flex items-center justify-between gap-2 text-xs transition-colors ${
+              isStampActive
+                ? 'bg-emerald-50/70 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800/60'
+                : 'bg-rose-50/70 dark:bg-rose-950/30 border-rose-200 dark:border-rose-800/60'
+            }`}>
+              <div className="flex items-center gap-2 min-w-0">
+                <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${isStampActive ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`} />
+                <div className="min-w-0">
+                  <p className="font-semibold text-slate-800 dark:text-slate-100 truncate">
+                    {isStampActive ? 'Sello activo en el documento' : 'Sello quitado de todas las páginas'}
+                  </p>
+                  <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate">
+                    {isStampActive ? 'Se estampará en las páginas seleccionadas' : 'Páginas limpias (sin sellos aplicados)'}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                id="sidebar-stamp-status-toggle-btn"
+                onClick={isStampActive ? (onOpenRemoveModal || onRemoveFromAllPages) : onRestoreStamp}
+                className={`px-2.5 py-1 rounded-lg text-xs font-semibold shrink-0 transition-colors cursor-pointer flex items-center gap-1 ${
+                  isStampActive
+                    ? 'bg-rose-100 hover:bg-rose-200 dark:bg-rose-900/50 dark:hover:bg-rose-900 text-rose-700 dark:text-rose-300'
+                    : 'bg-blue-600 hover:bg-blue-700 text-white shadow-2xs'
+                }`}
+                title={isStampActive ? 'Quitar sello de todas las páginas' : 'Volver a colocar sello'}
+              >
+                {isStampActive ? (
+                  <>
+                    <Eraser className="w-3 h-3" />
+                    <span>Quitar</span>
+                  </>
+                ) : (
+                  <>
+                    <Stamp className="w-3 h-3" />
+                    <span>Colocar</span>
+                  </>
+                )}
+              </button>
+            </div>
+
             {/* Import Custom SVG */}
             <div>
               <label className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 block mb-1 uppercase tracking-wider">
@@ -884,6 +939,31 @@ export const SidebarControls: React.FC<SidebarControlsProps> = ({
           <FileDown className="w-4 h-4" />
           <span>{isExporting ? 'Foliando Documento...' : 'Exportar PDF Foliado'}</span>
         </button>
+
+        {/* Quitar de todas las páginas (Hacer lo opuesto) */}
+        {isStampActive ? (
+          <button
+            type="button"
+            id="sidebar-remove-stamp-btn"
+            onClick={onOpenRemoveModal || onRemoveFromAllPages}
+            className="w-full py-2.5 px-3 bg-white dark:bg-slate-800 hover:bg-rose-50 hover:dark:bg-rose-950/30 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-900/60 font-semibold rounded-xl text-xs flex items-center justify-center gap-2 transition-all cursor-pointer shadow-2xs"
+            title="Quitar sello y folio de todas las páginas por si te olvidaste de algo"
+          >
+            <Eraser className="w-4 h-4 text-rose-500" />
+            <span>Quitar de todas las páginas (Hacer lo opuesto)</span>
+          </button>
+        ) : (
+          <button
+            type="button"
+            id="sidebar-restore-stamp-btn"
+            onClick={onRestoreStamp}
+            className="w-full py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-xl text-xs flex items-center justify-center gap-2 transition-all cursor-pointer shadow-2xs"
+            title="Volver a colocar sello y folio en todas las páginas"
+          >
+            <Stamp className="w-4 h-4" />
+            <span>Volver a colocar sello en las páginas</span>
+          </button>
+        )}
       </div>
     </aside>
   );

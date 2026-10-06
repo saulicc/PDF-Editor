@@ -380,3 +380,87 @@ export async function stampAndExportPdf(
 
   return finalPdfBytes;
 }
+
+/**
+ * Cleans / erases the stamp and folio area from the selected pages of a PDF,
+ * drawing a clean white background patch over the stamp coordinates.
+ * Useful when the user loaded an already stamped document or wants to physically
+ * remove stamp marks from all pages.
+ */
+export async function eraseStampAreaFromPdf(
+  sourcePdfBytes: Uint8Array,
+  stampGroup: StampGroup,
+  rangeType: PageRangeType,
+  customRangeStr: string,
+  currentPageIndex: number,
+  onProgress?: (p: ExportProgress) => void
+): Promise<Uint8Array> {
+  onProgress?.({
+    currentPage: 0,
+    totalPages: 0,
+    percent: 10,
+    status: 'Cargando documento para limpieza...',
+  });
+
+  const pdfDoc = await PDFDocument.load(sourcePdfBytes, { ignoreEncryption: true });
+  const totalPages = pdfDoc.getPageCount();
+  const pagesToClean = getPagesToStamp(rangeType, customRangeStr, totalPages, currentPageIndex + 1);
+
+  const stampW = stampGroup.width;
+  const stampH = stampGroup.height;
+  const padding = 6; // Safety margin around stamp boundary
+
+  for (let idx = 0; idx < pagesToClean.length; idx++) {
+    const pageNum = pagesToClean[idx];
+    const page = pdfDoc.getPage(pageNum - 1);
+    const { width: pageWidth, height: pageHeight } = page.getSize();
+
+    const { x: pageStampX, y: pageStampY } = getPageStampCoordinates(
+      stampGroup,
+      pageWidth,
+      pageHeight
+    );
+
+    // Bottom-left in PDF coordinates
+    const pdfRectX = Math.max(0, pageStampX - padding);
+    const pdfRectY = Math.max(0, pageHeight - (pageStampY + stampH) - padding);
+    const pdfRectW = Math.min(pageWidth - pdfRectX, stampW + padding * 2);
+    const pdfRectH = Math.min(pageHeight - pdfRectY, stampH + padding * 2);
+
+    page.drawRectangle({
+      x: pdfRectX,
+      y: pdfRectY,
+      width: pdfRectW,
+      height: pdfRectH,
+      color: rgb(1, 1, 1),
+      opacity: 1.0,
+    });
+
+    const percent = Math.round(15 + ((idx + 1) / pagesToClean.length) * 80);
+    onProgress?.({
+      currentPage: idx + 1,
+      totalPages: pagesToClean.length,
+      percent,
+      status: `Limpiando marcas en página ${pageNum}...`,
+    });
+  }
+
+  onProgress?.({
+    currentPage: pagesToClean.length,
+    totalPages: pagesToClean.length,
+    percent: 98,
+    status: 'Guardando documento limpio...',
+  });
+
+  const cleanBytes = await pdfDoc.save();
+
+  onProgress?.({
+    currentPage: pagesToClean.length,
+    totalPages: pagesToClean.length,
+    percent: 100,
+    status: '¡Documento limpiado con éxito!',
+  });
+
+  return cleanBytes;
+}
+

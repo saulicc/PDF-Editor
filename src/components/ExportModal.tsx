@@ -4,7 +4,7 @@
  */
 
 import React, { useState } from 'react';
-import { Download, CheckCircle2, FileText, ExternalLink, X, ShieldCheck, FolderOpen, FileUp } from 'lucide-react';
+import { Download, CheckCircle2, FileText, ExternalLink, X, ShieldCheck, FolderOpen, FileUp, Eraser } from 'lucide-react';
 
 interface ExportModalProps {
   isOpen: boolean;
@@ -15,6 +15,7 @@ interface ExportModalProps {
   endFolio: number;
   onClose: () => void;
   onUploadNextPdf?: (file: File, continueFolioSequence: boolean) => void;
+  onRevertAndClean?: () => void;
 }
 
 export const ExportModal: React.FC<ExportModalProps> = ({
@@ -26,6 +27,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   endFolio,
   onClose,
   onUploadNextPdf,
+  onRevertAndClean,
 }) => {
   const [continueFolioSequence, setContinueFolioSequence] = useState<boolean>(true);
 
@@ -136,6 +138,22 @@ export const ExportModal: React.FC<ExportModalProps> = ({
               <span>Ver</span>
             </button>
           </div>
+
+          {/* ¿Te olvidaste de algo? Quitar sellos de todas las páginas y volver */}
+          {onRevertAndClean && (
+            <div className="pt-1">
+              <button
+                type="button"
+                id="modal-revert-and-clean-btn"
+                onClick={onRevertAndClean}
+                className="w-full py-2.5 px-3 border border-rose-200 dark:border-rose-900/60 bg-rose-50/70 hover:bg-rose-100 dark:bg-rose-950/30 dark:hover:bg-rose-900/40 text-rose-700 dark:text-rose-300 font-semibold rounded-xl text-xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                title="Quitar sello y folio de todas las páginas por si te olvidaste de agregar algo"
+              >
+                <Eraser className="w-3.5 h-3.5 text-rose-600 dark:text-rose-400" />
+                <span>¿Te olvidaste de algo? Quitar sello de todas las páginas</span>
+              </button>
+            </div>
+          )}
 
           {/* Cargar siguiente documento sin salir */}
           {onUploadNextPdf && (

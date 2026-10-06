@@ -19,6 +19,8 @@ import {
   Upload,
   FileText,
   FolderOpen,
+  Eraser,
+  Stamp,
 } from 'lucide-react';
 
 interface StampCanvasProps {
@@ -31,6 +33,9 @@ interface StampCanvasProps {
   docFileName?: string;
   onUploadPdf?: (file: File) => void;
   isLoadingUpload?: boolean;
+  isStampActive?: boolean;
+  onRemoveStampFromAllPages?: () => void;
+  onRestoreStamp?: () => void;
 }
 
 export const StampCanvas: React.FC<StampCanvasProps> = ({
@@ -43,6 +48,9 @@ export const StampCanvas: React.FC<StampCanvasProps> = ({
   docFileName,
   onUploadPdf,
   isLoadingUpload,
+  isStampActive = true,
+  onRemoveStampFromAllPages,
+  onRestoreStamp,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -454,6 +462,37 @@ export const StampCanvas: React.FC<StampCanvasProps> = ({
               {currentFolioText}
             </span>
           </div>
+
+          {/* Quick Remove / Restore Stamp from All Pages (Hacer lo opuesto) */}
+          {isStampActive ? (
+            onRemoveStampFromAllPages && (
+              <button
+                type="button"
+                id="canvas-remove-stamp-btn"
+                onClick={onRemoveStampFromAllPages}
+                className="flex items-center gap-1.5 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 dark:hover:bg-rose-900/50 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800 text-xs font-semibold px-2.5 py-1.5 rounded-lg cursor-pointer transition-colors shadow-2xs shrink-0"
+                title="Quitar sello y folio de todas las páginas (por si te olvidaste de algo)"
+              >
+                <Eraser className="w-3.5 h-3.5 text-rose-600 dark:text-rose-400" />
+                <span className="hidden sm:inline">Quitar de todas las páginas</span>
+                <span className="sm:hidden">Quitar sello</span>
+              </button>
+            )
+          ) : (
+            onRestoreStamp && (
+              <button
+                type="button"
+                id="canvas-restore-stamp-btn"
+                onClick={onRestoreStamp}
+                className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white text-xs font-semibold px-2.5 py-1.5 rounded-lg cursor-pointer transition-colors shadow-2xs shrink-0"
+                title="Volver a colocar sello y folio en las páginas"
+              >
+                <Stamp className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Volver a colocar sello</span>
+                <span className="sm:hidden">Colocar sello</span>
+              </button>
+            )
+          )}
         </div>
 
         {/* Right: Zoom & Viewport controls */}
@@ -520,94 +559,122 @@ export const StampCanvas: React.FC<StampCanvasProps> = ({
           {/* Real PDF Page Render */}
           <canvas ref={canvasRef} className="block w-full h-full pointer-events-none" />
 
+          {/* Banner when stamp is removed from all pages */}
+          {!isStampActive && (
+            <div
+              id="clean-document-banner"
+              className="absolute top-4 left-1/2 -translate-x-1/2 z-30 bg-slate-900/90 text-white backdrop-blur-md border border-slate-700/80 px-4 py-2 rounded-full shadow-xl text-xs flex items-center gap-2.5 select-none animate-fadeIn"
+            >
+              <div className="w-5 h-5 rounded-full bg-rose-500/20 text-rose-400 flex items-center justify-center shrink-0">
+                <Eraser className="w-3 h-3" />
+              </div>
+              <span className="font-medium text-slate-200">
+                Sello quitado de todas las páginas (vista limpia)
+              </span>
+              {onRestoreStamp && (
+                <button
+                  type="button"
+                  id="canvas-banner-restore-btn"
+                  onClick={onRestoreStamp}
+                  className="bg-blue-600 hover:bg-blue-500 text-white font-bold text-[11px] px-2.5 py-1 rounded-full transition-colors cursor-pointer ml-1 shadow-2xs flex items-center gap-1"
+                >
+                  <Stamp className="w-3 h-3" />
+                  <span>Volver a colocar</span>
+                </button>
+              )}
+            </div>
+          )}
+
           {/* ========================================================= */}
           {/* THE STAMP GROUP: SVG + FOLIO COMPOUND UNIT                */}
           {/* Unlocked: allows independent folio positioning & sizing   */}
           {/* Locked: moves, scales, and rotates as a single unit       */}
           {/* ========================================================= */}
-          <div
-            id="stamp-group-unit"
-            onPointerDown={handlePointerDownMove}
-            style={{
-              position: 'absolute',
-              left: `${stampDomX}px`,
-              top: `${stampDomY}px`,
-              width: `${stampDomW}px`,
-              height: `${stampDomH}px`,
-              transform: `rotate(${stampGroup.rotation}deg)`,
-              transformOrigin: 'center center',
-              opacity: stampGroup.opacity,
-              cursor: isDraggingGroup ? 'grabbing' : 'grab',
-            }}
-            className={`group select-none touch-none transition-shadow ${
-              isDraggingGroup || isResizingGroup || isRotatingGroup
-                ? 'ring-2 ring-blue-500 shadow-xl'
-                : 'hover:ring-1 hover:ring-blue-400'
-            }`}
-            title="Sello y Folio indivisible — Arrastra para mover el conjunto"
-          >
-            {/* 1. SVG Graphic Content */}
+          {isStampActive && (
             <div
-              className="w-full h-full pointer-events-none select-none drop-shadow-xs [&>svg]:w-full [&>svg]:h-full"
-              dangerouslySetInnerHTML={{ __html: stampGroup.svgRaw }}
-            />
-
-            {/* 2. Folio Text: Relative to SVG coordinate box */}
-            <div
-              id="folio-bound-text"
-              onPointerDown={handlePointerDownFolio}
+              id="stamp-group-unit"
+              onPointerDown={handlePointerDownMove}
               style={{
                 position: 'absolute',
-                left: `${stampGroup.folio.relativePosition.x * 100}%`,
-                top: `${stampGroup.folio.relativePosition.y * 100}%`,
-                transform: `translate(${
-                  stampGroup.folio.relativePosition.textAlign === 'center'
-                    ? '-50%'
-                    : stampGroup.folio.relativePosition.textAlign === 'right'
-                    ? '-100%'
-                    : '0%'
-                }, -50%)`,
-                fontSize: `${scaledDomFontSize}px`,
-                color: stampGroup.folio.relativePosition.color,
-                fontFamily: stampGroup.folio.relativePosition.fontFamily.includes('Times')
-                  ? "'Times New Roman', serif"
-                  : stampGroup.folio.relativePosition.fontFamily.includes('Courier')
-                  ? "'Courier New', monospace"
-                  : "'Helvetica Neue', Arial, sans-serif",
-                fontWeight: stampGroup.folio.relativePosition.fontFamily.includes('Bold')
-                  ? 'bold'
-                  : 'normal',
-                lineHeight: 1.1,
-                cursor: 'grab',
+                left: `${stampDomX}px`,
+                top: `${stampDomY}px`,
+                width: `${stampDomW}px`,
+                height: `${stampDomH}px`,
+                transform: `rotate(${stampGroup.rotation}deg)`,
+                transformOrigin: 'center center',
+                opacity: stampGroup.opacity,
+                cursor: isDraggingGroup ? 'grabbing' : 'grab',
               }}
-              className="select-none whitespace-nowrap tracking-tight drop-shadow-2xs touch-none pointer-events-auto"
+              className={`group select-none touch-none transition-shadow ${
+                isDraggingGroup || isResizingGroup || isRotatingGroup
+                  ? 'ring-2 ring-blue-500 shadow-xl'
+                  : 'hover:ring-1 hover:ring-blue-400'
+              }`}
+              title="Sello y Folio indivisible — Arrastra para mover el conjunto"
             >
-              {currentFolioText}
+              {/* 1. SVG Graphic Content */}
+              <div
+                className="w-full h-full pointer-events-none select-none drop-shadow-xs [&>svg]:w-full [&>svg]:h-full"
+                dangerouslySetInnerHTML={{ __html: stampGroup.svgRaw }}
+              />
+
+              {/* 2. Folio Text: Relative to SVG coordinate box */}
+              <div
+                id="folio-bound-text"
+                onPointerDown={handlePointerDownFolio}
+                style={{
+                  position: 'absolute',
+                  left: `${stampGroup.folio.relativePosition.x * 100}%`,
+                  top: `${stampGroup.folio.relativePosition.y * 100}%`,
+                  transform: `translate(${
+                    stampGroup.folio.relativePosition.textAlign === 'center'
+                      ? '-50%'
+                      : stampGroup.folio.relativePosition.textAlign === 'right'
+                      ? '-100%'
+                      : '0%'
+                  }, -50%)`,
+                  fontSize: `${scaledDomFontSize}px`,
+                  color: stampGroup.folio.relativePosition.color,
+                  fontFamily: stampGroup.folio.relativePosition.fontFamily.includes('Times')
+                    ? "'Times New Roman', serif"
+                    : stampGroup.folio.relativePosition.fontFamily.includes('Courier')
+                    ? "'Courier New', monospace"
+                    : "'Helvetica Neue', Arial, sans-serif",
+                  fontWeight: stampGroup.folio.relativePosition.fontFamily.includes('Bold')
+                    ? 'bold'
+                    : 'normal',
+                  lineHeight: 1.1,
+                  cursor: 'grab',
+                }}
+                className="select-none whitespace-nowrap tracking-tight drop-shadow-2xs touch-none pointer-events-auto"
+              >
+                {currentFolioText}
+              </div>
+
+              {/* Compound Selection Bounding Box UI */}
+              <div className="absolute -inset-0.5 rounded-xs pointer-events-none border border-blue-500/60 opacity-0 group-hover:opacity-100 transition-opacity" />
+
+              {/* Top Rotation Handle */}
+              <div
+                id="stamp-group-rotate-handle"
+                onPointerDown={handlePointerDownRotate}
+                className="absolute -top-7 left-1/2 -translate-x-1/2 w-5 h-5 bg-white dark:bg-slate-800 border-2 border-blue-600 rounded-full shadow-md cursor-grab active:cursor-grabbing flex items-center justify-center hover:scale-115 transition-transform z-30"
+                title="Rotar conjunto (Sello y Folio juntos)"
+              >
+                <RotateCw className="w-3 h-3 text-blue-600" />
+              </div>
+              {/* Connecting stem for rotation handle */}
+              <div className="absolute -top-2 left-1/2 -translate-x-1/2 w-0.5 h-2 bg-blue-500 pointer-events-none" />
+
+              {/* Bottom-Right Proportional Resize Handle */}
+              <div
+                id="stamp-group-resize-handle"
+                onPointerDown={handlePointerDownResize}
+                className="absolute -bottom-2 -right-2 w-4 h-4 bg-white dark:bg-slate-800 border-2 border-blue-600 rounded-xs shadow-md cursor-se-resize hover:scale-125 transition-transform z-30"
+                title="Redimensionar conjunto proporcionalmente"
+              />
             </div>
-
-            {/* Compound Selection Bounding Box UI */}
-            <div className="absolute -inset-0.5 rounded-xs pointer-events-none border border-blue-500/60 opacity-0 group-hover:opacity-100 transition-opacity" />
-
-            {/* Top Rotation Handle */}
-            <div
-              id="stamp-group-rotate-handle"
-              onPointerDown={handlePointerDownRotate}
-              className="absolute -top-7 left-1/2 -translate-x-1/2 w-5 h-5 bg-white dark:bg-slate-800 border-2 border-blue-600 rounded-full shadow-md cursor-grab active:cursor-grabbing flex items-center justify-center hover:scale-115 transition-transform z-30"
-              title="Rotar conjunto (Sello y Folio juntos)"
-            >
-              <RotateCw className="w-3 h-3 text-blue-600" />
-            </div>
-            {/* Connecting stem for rotation handle */}
-            <div className="absolute -top-2 left-1/2 -translate-x-1/2 w-0.5 h-2 bg-blue-500 pointer-events-none" />
-
-            {/* Bottom-Right Proportional Resize Handle */}
-            <div
-              id="stamp-group-resize-handle"
-              onPointerDown={handlePointerDownResize}
-              className="absolute -bottom-2 -right-2 w-4 h-4 bg-white dark:bg-slate-800 border-2 border-blue-600 rounded-xs shadow-md cursor-se-resize hover:scale-125 transition-transform z-30"
-              title="Redimensionar conjunto proporcionalmente"
-            />
-          </div>
+          )}
 
           {/* Loading overlay during page changes */}
           {isRendering && (

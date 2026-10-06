@@ -99,6 +99,8 @@ export interface StampGroup {
   
   /** Whether the composition is locked (true = single rigid unit, false = folio calibration mode) */
   isCompositionLocked?: boolean;
+  /** Whether the stamp is currently active/placed on pages (false = removed from all pages) */
+  isActive?: boolean;
 }
 
 export interface PageInfo {
